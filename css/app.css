@@ -297,3 +297,26 @@ input.field { width: 100%; background: #121614; border: 1px solid var(--line); p
   body.nav #streetPill { bottom: calc(var(--sab) + 80px); }
   #navBottom { padding-top: 6px; padding-bottom: calc(var(--sab) + 6px); }
 }
+
+/* ---------- App Android ---------- */
+body.native #splash { cursor: default; }
+body.native #splash .press { visibility: hidden; }
+#splash.fade { opacity: 0; transition: opacity .45s ease; pointer-events: none; }
+
+/* Asistente de configuración */
+.setup-step { display: flex; gap: 12px; align-items: flex-start; padding: 14px 4px; border-bottom: 1px solid var(--line); }
+.setup-step .n { width: 34px; height: 34px; flex: none; display: grid; place-items: center; font-family: var(--big); font-size: 22px; background: rgba(255,255,255,.08); }
+.setup-step.ok .n { background: var(--ok); color: #0b0d0c; }
+.setup-step .tx { flex: 1; min-width: 0; }
+.setup-step .tt { font-family: var(--ui); font-weight: 600; font-size: 17px; text-transform: uppercase; letter-spacing: .04em; }
+.setup-step .dd { font-size: 13.5px; color: var(--muted); margin-top: 3px; line-height: 1.4; }
+.setup-step .st { font-family: var(--ui); font-size: 13px; color: var(--ok); text-transform: uppercase; letter-spacing: .08em; margin-top: 6px; }
+.setup-step .btn { margin-top: 8px; }
+
+/* Panel inferior: se puede arrastrar hacia abajo para cerrarlo */
+.sheet.dragging { animation: none; transition: none; }
+.sheet.snap { transition: transform .2s ease; }
+.sheet-grip { cursor: grab; touch-action: none; }
+
+/* Aviso de versión nueva */
+.update-notes { font-size: 13.5px; color: var(--muted); white-space: pre-wrap; line-height: 1.45; max-height: 40vh; overflow-y: auto; background: rgba(255,255,255,.04); padding: 10px; margin: 8px 0 14px; }

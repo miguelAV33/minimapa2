@@ -16,6 +16,7 @@ export const Native = {
   get share() { return plugin('Share'); },
   get app() { return plugin('App'); },
   get car() { return plugin('CarBridge'); },
+  get sistema() { return plugin('Sistema'); },
 };
 
 /** GPS nativo que sigue funcionando con la pantalla apagada (servicio en primer plano con notificación). */

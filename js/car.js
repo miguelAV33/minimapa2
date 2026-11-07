@@ -10,6 +10,9 @@ const $ = (s) => document.querySelector(s);
 const EMPTY = { type: 'FeatureCollection', features: [] };
 
 const S = { skin: 'radar', buildings3d: false, poi: true, showRadars: true, headingUp: true, tilt: true };
+let dark = false;
+// De noche el coche no usa la skin clara (deslumbra)
+const carSkin = () => (dark && S.skin === 'atlas' ? 'radar' : S.skin);
 let radars = EMPTY;
 let route = null; // {coords, dest, stops}
 let live = null;
@@ -20,7 +23,7 @@ let lastAlertIcon = '';
 
 const map = new maplibregl.Map({
   container: 'map',
-  style: buildStyle(S.skin, { poi: S.poi, buildings3d: S.buildings3d }),
+  style: buildStyle(carSkin(), { poi: S.poi, buildings3d: S.buildings3d }),
   center: CONFIG.startCenter,
   zoom: 15,
   interactive: false, // los gestos llegan desde Android Auto
@@ -28,10 +31,12 @@ const map = new maplibregl.Map({
   fadeDuration: 0,
   maxPitch: 65,
 });
-attachImages(map, () => SKINS[S.skin]);
+attachImages(map, () => SKINS[carSkin()]);
+const foldAttribution = () => document.querySelectorAll('.maplibregl-ctrl-attrib.maplibregl-compact-show').forEach((e) => e.classList.remove('maplibregl-compact-show'));
+map.on('load', foldAttribution);
 
 function applySkinVars() {
-  document.documentElement.style.setProperty('--accent', (SKINS[S.skin] || SKINS.radar).accent);
+  document.documentElement.style.setProperty('--accent', (SKINS[carSkin()] || SKINS.radar).accent);
 }
 
 function src(id, data) {
@@ -40,7 +45,7 @@ function src(id, data) {
 }
 
 function addOverlays() {
-  const sk = SKINS[S.skin] || SKINS.radar;
+  const sk = SKINS[carSkin()] || SKINS.radar;
   for (const id of ['poi-mid', 'poi-low']) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', 'none');
   const before = map.getLayer(LABEL_ANCHOR) ? LABEL_ANCHOR : undefined;
   src('route', routeGeo());
@@ -52,6 +57,10 @@ function addOverlays() {
   map.addLayer({ id: 'route-glow', type: 'line', source: 'route', filter: ['==', ['get', 'kind'], 'main'], layout: lineLayout, paint: { 'line-color': sk.route, 'line-width': wz(12, 26), 'line-blur': 10, 'line-opacity': 0.45 } }, before);
   map.addLayer({ id: 'route-casing', type: 'line', source: 'route', filter: ['==', ['get', 'kind'], 'main'], layout: lineLayout, paint: { 'line-color': sk.routeCasing, 'line-width': wz(7, 15) } }, before);
   map.addLayer({ id: 'route-main', type: 'line', source: 'route', filter: ['==', ['get', 'kind'], 'main'], layout: lineLayout, paint: { 'line-color': sk.route, 'line-width': wz(4.5, 10) } }, before);
+  map.addLayer({
+    id: 'route-arrows', type: 'symbol', source: 'route', minzoom: 13, filter: ['==', ['get', 'kind'], 'main'],
+    layout: { 'symbol-placement': 'line', 'symbol-spacing': 90, 'icon-image': 'route-arrow', 'icon-size': ['interpolate', ['linear'], ['zoom'], 13, 0.7, 18, 1.1], 'icon-allow-overlap': true, 'icon-ignore-placement': true, 'icon-rotation-alignment': 'map' },
+  }, before);
   map.addLayer({ id: 'radar-sections', type: 'line', source: 'radars', minzoom: 11, filter: ['==', ['get', 'tipo'], 'tramo-linea'], layout: { visibility: S.showRadars ? 'visible' : 'none' }, paint: { 'line-color': '#ff6d00', 'line-width': 3, 'line-dasharray': [2, 1.5], 'line-opacity': 0.75 } }, before);
   map.addLayer({
     id: 'radars', type: 'symbol', source: 'radars', minzoom: 8, filter: ['!=', ['get', 'tipo'], 'tramo-linea'],
@@ -179,11 +188,23 @@ function hud() {
 }
 
 // ---- API que llama Android ----
+function restyle() {
+  map.setStyle(buildStyle(carSkin(), { poi: S.poi, buildings3d: S.buildings3d }), { diff: false });
+}
+
+window.carSetDark = (d) => {
+  const before = carSkin();
+  dark = !!d;
+  applySkinVars();
+  if (carSkin() !== before) restyle();
+};
+
 window.carSetSettings = (s) => {
-  const restyle = s.skin !== S.skin || !!s.buildings3d !== !!S.buildings3d || s.poi !== S.poi;
+  const before = carSkin();
+  const needs = !!s.buildings3d !== !!S.buildings3d || s.poi !== S.poi;
   Object.assign(S, s);
   applySkinVars();
-  if (restyle) map.setStyle(buildStyle(S.skin, { poi: S.poi, buildings3d: S.buildings3d }), { diff: false });
+  if (needs || carSkin() !== before) restyle();
   else for (const id of ['radars', 'radar-sections']) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', S.showRadars ? 'visible' : 'none');
 };
 

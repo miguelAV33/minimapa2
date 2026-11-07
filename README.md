@@ -16,6 +16,7 @@ Navegador GPS personal que funciona en el navegador del móvil y se instala como
 - **Simulador**: recorre la ruta sin moverte, para probar los avisos desde el sofá.
 - Funciona sin conexión la app y el mapa que ya hayas visto, y mantiene la pantalla encendida.
 - **Tráfico en directo (opcional)** con una clave gratuita de TomTom.
+- **Skin automática de día y de noche** según la salida y la puesta de sol, flechas de sentido sobre la ruta, recentrado automático y vibración en los avisos.
 
 ## App Android (APK) y Android Auto
 
@@ -26,7 +27,7 @@ Cada vez que se sube un cambio a `main`, GitHub Actions compila el APK y lo publ
 Para instalarla:
 
 1. Abre el enlace en el móvil Android, descarga el APK y ábrelo. Si te lo pide, permite *Instalar apps de origen desconocido*.
-2. Abre Minimapa, pulsa la pantalla de inicio y acepta la ubicación y las notificaciones. La notificación "Minimapa activo" es la que mantiene el GPS y los avisos con la pantalla apagada.
+2. Abre Minimapa. La primera vez sale el asistente **Ponlo a punto**: ubicación, notificación, batería sin restricciones (clave en Xiaomi, Samsung, Huawei u Oppo para que no la cierren a mitad de ruta) y Android Auto. La notificación "Minimapa activo" es la que mantiene el GPS y los avisos con la pantalla apagada.
 3. Cuando haya una versión nueva, la app te avisa (Menú → Info → Descargar).
 
 Para que salga en **Android Auto** (al no venir de Play Store hay que activarlo una vez):
@@ -38,7 +39,7 @@ Para que salga en **Android Auto** (al no venir de Play Store hay que activarlo 
 
 En el coche se ve el mapa con tu skin, la tarjeta de maniobra con distancia y hora de llegada, los radares con el parpadeo rojo y azul, el velocímetro con el límite y la velocidad media en los tramos. El botón **Destinos** permite ir a Casa, Trabajo, favoritos, recientes, la gasolinera más barata o el parking más cercano sin tocar el móvil. La voz suena por los altavoces del coche.
 
-Las rutas y los avisos se calculan en la app del móvil, así que tiene que estar abierta (puede quedarse en segundo plano). Si conectas el coche sin abrirla antes, la pantalla del coche te lo recuerda.
+Las rutas y los avisos se calculan en la app del móvil, así que tiene que estar abierta (puede quedarse en segundo plano). Si conectas el coche sin abrirla, Minimapa intenta abrirse sola y, si Android no lo permite, te deja una notificación para abrirla con un toque. De noche, la pantalla del coche cambia la skin clara por una oscura.
 
 **Opiniones de quien la pruebe**: Menú → Info → *Enviar opinión* manda un mensaje por WhatsApp (u otra app) con el comentario, la versión, el modelo de móvil y los últimos errores. *Compartir la app* envía el enlace de descarga con las instrucciones.
 

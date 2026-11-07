@@ -27,6 +27,11 @@ public class CarBridgePlugin extends Plugin {
             notifyListeners("carAction", o, true);
         });
         CarState.get().setBrainAlive(true);
+        try {
+            androidx.core.app.NotificationManagerCompat.from(getContext()).cancel(MinimapaSession.NOTIF_ID);
+        } catch (Exception ignored) {
+            // nada que quitar
+        }
     }
 
     @Override

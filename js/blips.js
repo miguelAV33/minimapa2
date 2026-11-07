@@ -263,6 +263,17 @@ function makeOneway(skin) {
   return toImage(c, ctx);
 }
 
+/** Flecha de sentido que se repite sobre la ruta. */
+function makeRouteArrow() {
+  const w = 16, hh = 12;
+  const { c, ctx } = canvas(w, hh);
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(4, 2); ctx.lineTo(11, hh / 2); ctx.lineTo(4, hh - 2);
+  ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 4.2; ctx.stroke();
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2.2; ctx.stroke();
+  return toImage(c, ctx);
+}
+
 /** Destino: rombo con bandera, en el color de la ruta. */
 function makeDest(skin, kind) {
   const size = 34;
@@ -298,6 +309,7 @@ export function makeImage(id, skin) {
   if (id === 'shield-red') return makeShield('#c62828');
   if (id === 'shield-orange') return makeShield('#d9822b');
   if (id === 'oneway') return makeOneway(skin);
+  if (id === 'route-arrow') return makeRouteArrow();
   if (id === 'tag') return makeTag(skin);
   if (id === 'dest') return makeDest(skin, 'dest');
   if (id === 'stop') return makeDest(skin, 'stop');

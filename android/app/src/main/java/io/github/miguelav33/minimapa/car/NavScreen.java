@@ -5,7 +5,6 @@ import android.os.SystemClock;
 
 import androidx.annotation.NonNull;
 import androidx.car.app.CarContext;
-import androidx.car.app.CarToast;
 import androidx.car.app.Screen;
 import androidx.car.app.model.Action;
 import androidx.car.app.model.ActionStrip;
@@ -41,7 +40,6 @@ public class NavScreen extends Screen implements CarState.Listener, DefaultLifec
     private boolean navigating;
     private long lastInvalidate;
     private boolean pendingInvalidate;
-    private String lastAlertKey = "";
     private final android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
 
     public NavScreen(@NonNull CarContext carContext, @NonNull CarMapRenderer renderer, @NonNull NavigationManager navManager) {
@@ -68,7 +66,6 @@ public class NavScreen extends Screen implements CarState.Listener, DefaultLifec
         JSONObject nav = CarState.get().nav();
         boolean active = nav != null && nav.optBoolean("active");
         setNavigating(active);
-        maybeToastAlert(nav);
         long now = SystemClock.uptimeMillis();
         if (now - lastInvalidate >= MIN_REFRESH_MS) {
             lastInvalidate = now;
@@ -92,18 +89,6 @@ public class NavScreen extends Screen implements CarState.Listener, DefaultLifec
         } catch (Exception ignored) {
             // El anfitrión puede rechazarlo si otra app está navegando
         }
-    }
-
-    /** Aviso corto en el coche cuando aparece un radar nuevo (además del aviso dibujado en el mapa). */
-    private void maybeToastAlert(JSONObject nav) {
-        if (nav == null) return;
-        JSONObject alert = nav.optJSONObject("alert");
-        String key = alert != null ? alert.optString("id") : "";
-        if (!key.isEmpty() && !key.equals(lastAlertKey)) {
-            String text = alert.optString("text");
-            if (!text.isEmpty()) CarToast.makeText(getCarContext(), text, CarToast.LENGTH_LONG).show();
-        }
-        lastAlertKey = key;
     }
 
     @NonNull

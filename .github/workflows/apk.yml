@@ -2,7 +2,7 @@ name: Compilar APK
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
     paths-ignore:
       - 'data/**'
       - '**.md'
@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: apk
+  group: apk-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -42,7 +42,7 @@ jobs:
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           {
             echo "VERSION_CODE=${{ github.run_number }}"
-            echo "VERSION_NAME=1.1.${{ github.run_number }}"
+            echo "VERSION_NAME=1.2.${{ github.run_number }}"
             echo "REMOTE_BASE=https://${OWNER}.github.io/${{ github.event.repository.name }}/"
             echo "REPO=${{ github.repository }}"
           } >> "$GITHUB_ENV"
@@ -80,6 +80,7 @@ jobs:
           path: minimapa.apk
 
       - name: Publicar la versión para descargar
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

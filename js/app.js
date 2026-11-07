@@ -11,6 +11,7 @@ import { NavEngine, RouteSimulator } from './nav.js';
 import { RadarDB, RadarWatcher, RADAR_TYPES, REPORT_TYPES, radarsOnRoute } from './radars.js';
 import { searchPlaces, reverse, searchCategory, CATEGORIES } from './search.js';
 import { loadFuel, nearestFuel, FUELS, fmtPrice } from './fuel.js';
+import { isNight } from './sun.js';
 import { NATIVE, Native, BUILD, startNativeGps, openNativeSettings, nativeKeepAwake, shareText, checkForUpdate, apkLink } from './native.js';
 
 // ======================================================================
@@ -25,6 +26,7 @@ const DEFAULTS = {
   alertDistance: 'auto', overTolerance: 0, overspeedAlerts: true, reportAlerts: true,
   osmLive: true, freeDriveLimits: true,
   tomtomKey: '', traffic: false, fuelType: 'g95',
+  autoSkin: false, daySkin: 'atlas', nightSkin: 'radar', vibrate: true, autoRecenter: true,
 };
 const S = { ...DEFAULTS, ...store.get('settings', {}) };
 S.radarTypes = { ...DEFAULTS.radarTypes, ...(S.radarTypes || {}) };
@@ -81,8 +83,16 @@ map.on('moveend', debounce(() => {
   store.set('lastZoom', map.getZoom());
 }, 1000));
 for (const ev of ['dragstart', 'zoomstart', 'rotatestart', 'pitchstart']) {
-  map.on(ev, (e) => { if (e.originalEvent && st.follow) setFollow(false); });
+  map.on(ev, (e) => {
+    if (!e.originalEvent) return;
+    st.lastUserMove = Date.now();
+    if (st.follow) setFollow(false);
+  });
 }
+// La atribución del mapa empieza plegada (botón "i") para no tapar el velocímetro
+const foldAttribution = () => document.querySelectorAll('.maplibregl-ctrl-attrib.maplibregl-compact-show').forEach((e) => e.classList.remove('maplibregl-compact-show'));
+map.on('load', foldAttribution);
+map.on('style.load', () => setTimeout(foldAttribution, 50));
 map.on('rotate', () => { const svg = $('#btnCompass svg'); if (svg) svg.style.transform = `rotate(${-map.getBearing()}deg)`; });
 
 const radarDB = new RadarDB();
@@ -122,6 +132,10 @@ function addOverlays() {
   map.addLayer({ id: 'route-glow', type: 'line', source: 'route', filter: ['==', ['get', 'kind'], 'main'], layout: lineLayout, paint: { 'line-color': sk.route, 'line-width': wz(12, 26), 'line-blur': 10, 'line-opacity': 0.45 } }, before);
   map.addLayer({ id: 'route-casing', type: 'line', source: 'route', filter: ['==', ['get', 'kind'], 'main'], layout: lineLayout, paint: { 'line-color': sk.routeCasing, 'line-width': wz(7, 15) } }, before);
   map.addLayer({ id: 'route-main', type: 'line', source: 'route', filter: ['==', ['get', 'kind'], 'main'], layout: lineLayout, paint: { 'line-color': sk.route, 'line-width': wz(4.5, 10) } }, before);
+  map.addLayer({
+    id: 'route-arrows', type: 'symbol', source: 'route', minzoom: 13, filter: ['==', ['get', 'kind'], 'main'],
+    layout: { 'symbol-placement': 'line', 'symbol-spacing': 90, 'icon-image': 'route-arrow', 'icon-size': ['interpolate', ['linear'], ['zoom'], 13, 0.6, 18, 1], 'icon-allow-overlap': true, 'icon-ignore-placement': true, 'icon-rotation-alignment': 'map' },
+  }, before);
   map.addLayer({ id: 'radar-sections', type: 'line', source: 'radars', minzoom: 11, filter: ['==', ['get', 'tipo'], 'tramo-linea'], layout: { visibility: S.showRadars ? 'visible' : 'none' }, paint: { 'line-color': '#ff6d00', 'line-width': 3, 'line-dasharray': [2, 1.5], 'line-opacity': 0.75 } }, before);
 
   const textPaint = { 'text-color': sk.text, 'text-halo-color': sk.halo, 'text-halo-width': 1.4 };
@@ -272,6 +286,9 @@ function followCamera(pos, rot, fix, ns, instant = false) {
 // GPS, brújula y bucle principal
 // ======================================================================
 function startGps() {
+  // Un solo seguimiento de GPS: si ya está en marcha y no hay señal, se abren los ajustes de permisos
+  if (st.gpsStarted) { if (NATIVE && !st.fix) openNativeSettings(); return; }
+  st.gpsStarted = true;
   if (NATIVE && Native.geo) {
     startNativeGps((f) => { if (!st.sim) processFix(f); }, (err) => {
       if (err?.code === 'NOT_AUTHORIZED') {
@@ -353,8 +370,15 @@ function processFix(fix) {
     st.everFixed = true;
     map.jumpTo({ center: [pos.lon, pos.lat], zoom: Math.max(map.getZoom(), 15) });
   }
+  // Recentrado automático: navegando, o circulando, si dejas el mapa quieto unos segundos
+  if (!st.follow && S.autoRecenter && (st.mode === 'nav' || (fix.speed || 0) > 4)
+      && Date.now() - (st.lastUserMove || 0) > 12000 && !st.sheetView && !document.querySelector('.overlay')) {
+    st.follow = true;
+    $('#btnLocate').classList.remove('attn');
+  }
   if (st.follow) followCamera(pos, rot, fix, ns);
   else $('#btnLocate').classList.add('attn');
+  checkAutoSkin(fix);
   updateStreetPill();
   freeDriveExtras(fix, ns);
   carLive(fix, ns, rs, pos, rot);
@@ -406,7 +430,13 @@ const nav = new NavEngine({
 
 const watcher = new RadarWatcher(radarDB, () => S, {
   speak: (t, o) => speak(t, o),
-  sound: (k) => sound(k),
+  sound: (k) => {
+    sound(k);
+    if (!S.vibrate || !navigator.vibrate) return;
+    if (k === 'radar') navigator.vibrate([180, 90, 180]);
+    else if (k === 'over') navigator.vibrate(140);
+    else if (k === 'section') navigator.vibrate(90);
+  },
 });
 
 async function previewRoute(dest) {
@@ -1011,6 +1041,26 @@ function setSkin(id) {
   S.skin = id; saveSettings(); applySkinVars();
   reloadStyle();
 }
+
+/** Elegir skin a mano: con el cambio automático activo, se guarda para el periodo actual (día o noche). */
+function pickSkin(id) {
+  if (S.autoSkin) {
+    const p = st.fix || nearPoint();
+    if (isNight(p.lat, p.lon)) S.nightSkin = id; else S.daySkin = id;
+  }
+  setSkin(id);
+}
+
+let lastSkinCheck = 0;
+function checkAutoSkin(fix) {
+  if (!S.autoSkin) return;
+  const now = Date.now();
+  if (now - lastSkinCheck < 120000) return;
+  lastSkinCheck = now;
+  const p = fix || st.fix || nearPoint();
+  const want = isNight(p.lat, p.lon) ? S.nightSkin : S.daySkin;
+  if (SKINS[want] && want !== S.skin) setSkin(want);
+}
 function reloadStyle() {
   map.setStyle(buildStyle(S.skin, { poi: S.poi, buildings3d: S.buildings3d }), { diff: false });
 }
@@ -1036,7 +1086,10 @@ function menuTab(t, rerender) {
   if (t === 'mapa') {
     return [
       h('h3', null, 'Estilo del mapa'),
-      skinCards((id) => { setSkin(id); rerender(); }),
+      skinCards((id) => { pickSkin(id); rerender(); }),
+      sw('autoSkin', 'Cambiar sola de día a noche', 'Según la salida y la puesta de sol donde estés', () => { lastSkinCheck = 0; checkAutoSkin(); rerender(); }),
+      S.autoSkin ? selectOpt('daySkin', 'Skin de día', Object.values(SKINS).map((k) => [k.id, k.name]), () => { lastSkinCheck = 0; checkAutoSkin(); }) : null,
+      S.autoSkin ? selectOpt('nightSkin', 'Skin de noche', Object.values(SKINS).map((k) => [k.id, k.name]), () => { lastSkinCheck = 0; checkAutoSkin(); }) : null,
       h('h3', null, 'Capas'),
       sw('poi', 'Lugares en el mapa', 'Iconos de gasolineras, tiendas, restaurantes…', reloadStyle),
       sw('showRadars', 'Radares en el mapa', null, () => ['radars', 'radar-sections'].forEach((l) => map.getLayer(l) && map.setLayoutProperty(l, 'visibility', S.showRadars ? 'visible' : 'none'))),
@@ -1046,6 +1099,7 @@ function menuTab(t, rerender) {
       sw('headingUp', 'Mapa orientado según la marcha', 'Si lo apagas, el norte queda siempre arriba'),
       sw('tilt', 'Vista inclinada al conducir'),
       sw('autoZoom', 'Zoom automático según la velocidad'),
+      sw('autoRecenter', 'Volver a centrar solo', 'Si mueves el mapa mientras conduces, vuelve a tu posición a los 12 segundos'),
     ];
   }
   if (t === 'rutas') {
@@ -1088,6 +1142,7 @@ function menuTab(t, rerender) {
       h('h3', null, 'Avisos'),
       selectOpt('alertDistance', 'Distancia del aviso', [['auto', 'Automática (según velocidad)'], ['300', '300 m'], ['500', '500 m'], ['800', '800 m'], ['1000', '1 km']]),
       sw('overspeedAlerts', 'Alerta si vas por encima del límite', 'Pitido y aviso de voz cerca del radar y en tramos'),
+      sw('vibrate', 'Vibrar con los avisos'),
       selectOpt('overTolerance', 'Margen antes de avisar', [['0', 'Sin margen'], ['5', '+5 %'], ['10', '+10 %']]),
       h('h3', null, 'Base de datos'),
       h('dl', { class: 'kv' },
@@ -1154,6 +1209,7 @@ function menuTab(t, rerender) {
     h('dl', { class: 'kv' }, h('dt', null, 'Versión'), h('dd', null, `${CONFIG.version}${NATIVE ? ' · app Android' : ' · web'}`)),
     st.update ? h('div', { class: 'row', style: { marginTop: '12px' } },
       h('a', { class: 'btn primary', href: st.update.url, target: '_blank', rel: 'noopener', style: { textDecoration: 'none' } }, `Descargar versión ${st.update.version}`)) : null,
+    NATIVE ? h('div', { class: 'row', style: { marginTop: '12px' } }, h('button', { class: 'btn', onclick: () => { document.querySelector('#menu')?.remove(); openSetup(false); } }, 'Asistente de configuración')) : null,
     h('h3', null, 'Probar con amigos'),
     h('div', { class: 'row' },
       h('button', { class: 'btn', onclick: shareApp, html: `${ICONS.share}<span>Compartir la app</span>` }),
@@ -1184,7 +1240,7 @@ function toggleSkinPop() {
   const render = () => {
     skinPop.replaceChildren(
       h('div', { class: 'panel-title' }, 'Estilo'),
-      skinCards((id) => { setSkin(id); render(); }),
+      skinCards((id) => { pickSkin(id); render(); }),
       sw('buildings3d', 'Edificios 3D', null, reloadStyle),
       sw('showRadars', 'Radares', null, () => ['radars', 'radar-sections'].forEach((l) => map.getLayer(l) && map.setLayoutProperty(l, 'visibility', S.showRadars ? 'visible' : 'none'))),
       sw('poi', 'Lugares', null, reloadStyle),
@@ -1435,9 +1491,94 @@ function initNative() {
     checkForUpdate().then((u) => {
       if (!u) return;
       st.update = u;
-      toast(`Hay una versión nueva (${u.version}). Menú → Info para descargarla.`, 7000);
+      if (store.get('updateSeen') !== u.version) openUpdateDialog(u);
     }).catch(() => {});
   }, 8000);
+}
+
+
+function openUpdateDialog(u) {
+  store.set('updateSeen', u.version);
+  const changes = (u.notes.split(/Cambios:/i)[1] || '').trim();
+  const ov = h('div', { class: 'overlay' },
+    h('div', { class: 'menu-head' }, h('div', { class: 'menu-title' }, 'NUEVA ', h('span', null, 'VERSIÓN')), h('button', { class: 'icon-btn', onclick: () => ov.remove(), html: ICONS.close, 'aria-label': 'Cerrar' })),
+    h('p', { class: 'legal' }, `Tienes la ${BUILD.version}. Ya está disponible la ${u.version}.`),
+    changes ? h('div', { class: 'update-notes' }, changes) : null,
+    h('div', { class: 'row' },
+      h('a', { class: 'btn primary', href: u.url, target: '_blank', rel: 'noopener', style: { textDecoration: 'none' } }, 'Descargar e instalar'),
+      h('button', { class: 'btn', onclick: () => ov.remove() }, 'Más tarde')),
+    h('p', { class: 'legal', style: { marginTop: '12px' } }, 'Se instala encima de la actual: no pierdes favoritos, reportes ni ajustes.'));
+  document.body.append(ov);
+}
+
+/** Asistente para dejar el móvil listo: ubicación, notificación, batería y Android Auto. */
+async function openSetup(first) {
+  const sys = Native.sistema;
+  let stat = {};
+  const body = h('div', { class: 'menu-body' });
+  const ov = h('div', { class: 'overlay', id: 'setup' },
+    h('div', { class: 'menu-head' }, h('div', { class: 'menu-title' }, 'PONLO A ', h('span', null, 'PUNTO')), h('button', { class: 'icon-btn', onclick: () => close(), html: ICONS.close, 'aria-label': 'Cerrar' })),
+    body);
+  const close = () => { store.set('setupDone', true); ov.remove(); document.removeEventListener('visibilitychange', onVis); };
+  const refresh = async () => {
+    try { stat = sys ? await sys.status() : {}; } catch { stat = {}; }
+    const brand = stat.manufacturer ? stat.manufacturer.charAt(0).toUpperCase() + stat.manufacturer.slice(1) : 'tu móvil';
+    const steps = [
+      { n: 1, title: 'Ubicación', ok: !!st.fix, desc: 'Para el GPS, las rutas y los avisos de radar. Si te deja, elige «Permitir siempre».', btn: st.fix ? null : ['Dar permiso', () => { startGps(); setTimeout(refresh, 2500); }] },
+      { n: 2, title: 'Notificación', ok: !!stat.notifications, desc: 'La notificación «Minimapa activo» es la que mantiene el GPS, la voz y los avisos con la pantalla apagada o en Android Auto.', btn: ['Permitir', async () => { await sys?.requestNotifications(); setTimeout(refresh, 1500); }] },
+      { n: 3, title: 'Batería sin restricciones', ok: !!stat.battery, desc: `Evita que ${brand} cierre Minimapa en segundo plano a mitad de ruta. Muy importante en Xiaomi, Samsung, Huawei y Oppo.`, btn: ['Quitar restricción', async () => { await sys?.requestBattery(); }] },
+      { n: 4, title: 'Android Auto', ok: !!store.get('autoSetupDone'), desc: stat.androidAuto === false ? 'No tienes la app Android Auto instalada. Si tu coche la usa, instálala primero.' : 'Abre Android Auto → Ajustes → toca 10 veces «Versión» → menú ⋮ → «Ajustes de desarrollador» → marca «Fuentes desconocidas». Después Minimapa sale en el coche.', btn: [stat.androidAuto === false ? 'Instalar Android Auto' : 'Abrir Android Auto', async () => { store.set('autoSetupDone', true); await sys?.openAndroidAuto(); }] },
+    ];
+    body.replaceChildren(
+      h('p', { class: 'legal' }, first ? 'Cuatro pasos y listo. Puedes volver aquí cuando quieras desde Menú → Info.' : 'Comprueba que todo está bien para usar Minimapa con la pantalla apagada y en el coche.'),
+      ...steps.map((x) => h('div', { class: `setup-step${x.ok ? ' ok' : ''}` },
+        h('div', { class: 'n' }, x.ok ? '✓' : String(x.n)),
+        h('div', { class: 'tx' },
+          h('div', { class: 'tt' }, x.title),
+          h('div', { class: 'dd' }, x.desc),
+          x.ok ? h('div', { class: 'st' }, 'Listo') : null,
+          !x.ok && x.btn ? h('button', { class: 'btn small primary', onclick: x.btn[1] }, x.btn[0]) : (x.n === 4 && x.btn ? h('button', { class: 'btn small', onclick: x.btn[1] }, x.btn[0]) : null)))),
+      h('div', { class: 'row', style: { marginTop: '16px' } }, h('button', { class: 'btn primary', onclick: () => close() }, 'Listo, a conducir')),
+    );
+  };
+  // Al volver de los ajustes del sistema se actualiza el estado
+  const onVis = () => { if (document.visibilityState === 'visible') setTimeout(refresh, 400); };
+  document.addEventListener('visibilitychange', onVis);
+  document.body.append(ov);
+  await refresh();
+}
+
+/** Arrastrar el panel inferior hacia abajo para cerrarlo. */
+function enableSheetDrag() {
+  const sheet = $('#sheet');
+  const bodyEl = $('#sheetBody');
+  let y0 = null, dy = 0;
+  sheet.addEventListener('touchstart', (e) => {
+    const onGrip = e.target.closest('.sheet-grip');
+    if (!onGrip && bodyEl.scrollTop > 0) return;
+    y0 = e.touches[0].clientY; dy = 0;
+    sheet.classList.add('dragging');
+  }, { passive: true });
+  sheet.addEventListener('touchmove', (e) => {
+    if (y0 == null) return;
+    dy = Math.max(0, e.touches[0].clientY - y0);
+    if (dy > 4) sheet.style.transform = `translateY(${dy}px)`;
+  }, { passive: true });
+  const end = () => {
+    if (y0 == null) return;
+    y0 = null;
+    sheet.classList.remove('dragging');
+    sheet.classList.add('snap');
+    if (dy > 90 && st.mode !== 'preview') {
+      sheet.style.transform = 'translateY(100%)';
+      setTimeout(() => { closeSheet(); st.pin = null; refreshPin(); sheet.style.transform = ''; sheet.classList.remove('snap'); }, 180);
+    } else {
+      sheet.style.transform = '';
+      setTimeout(() => sheet.classList.remove('snap'), 220);
+    }
+  };
+  sheet.addEventListener('touchend', end);
+  sheet.addEventListener('touchcancel', end);
 }
 
 function feedbackInfo() {
@@ -1547,20 +1688,31 @@ function buildUI() {
 
 function start() {
   const sp = $('#splash');
-  if (sp.dataset.started) return;
+  if (!sp || sp.dataset.started) return;
   sp.dataset.started = '1';
   unlockAudio();
   startCompass();
   startGps();
   requestWakeLock();
-  sp.remove();
-  if (!store.get('tipShown')) { store.set('tipShown', true); setTimeout(() => toast('Consejo: mantén pulsado el mapa para soltar un pin y crear una ruta.', 5000), 1500); }
+  if (NATIVE) {
+    sp.classList.add('fade');
+    setTimeout(() => sp.remove(), 500);
+    if (!store.get('setupDone')) setTimeout(() => openSetup(true), 900);
+    else if (!store.get('tipShown')) { store.set('tipShown', true); setTimeout(() => toast('Consejo: mantén pulsado el mapa para soltar un pin y crear una ruta.', 5000), 1500); }
+  } else {
+    sp.remove();
+    if (!store.get('tipShown')) { store.set('tipShown', true); setTimeout(() => toast('Consejo: mantén pulsado el mapa para soltar un pin y crear una ruta.', 5000), 1500); }
+  }
+  // Por si el sistema bloquea el audio hasta el primer toque
+  document.addEventListener('pointerdown', unlockAudio, { once: true });
 }
 
 buildUI();
 initNative();
 radarDB.init().catch((e) => console.warn('Radares:', e));
 $('#splash').addEventListener('click', start);
+enableSheetDrag();
+if (NATIVE) setTimeout(start, 900); // en la app no hace falta pulsar: arranca sola tras el logo
 $('#splash').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') start(); });
 
 if (!NATIVE && 'serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {

@@ -51,6 +51,7 @@ public class CarMapRenderer implements SurfaceCallback, CarState.Listener {
     private int width, height, dpi;
     private Rect visible;
     private boolean panMode;
+    private boolean dark;
 
     public CarMapRenderer(@NonNull CarContext ctx) {
         this.ctx = ctx;
@@ -130,6 +131,12 @@ public class CarMapRenderer implements SurfaceCallback, CarState.Listener {
         js("window.carAction&&carAction('" + name + "')");
     }
 
+    /** El coche está en modo noche: el mapa evita la skin clara. */
+    public void setDark(boolean on) {
+        dark = on;
+        js("window.carSetDark&&carSetDark(" + on + ")");
+    }
+
     public void setPanMode(boolean on) {
         panMode = on;
         js("window.carAction&&carAction('pan'," + on + ")");
@@ -169,6 +176,7 @@ public class CarMapRenderer implements SurfaceCallback, CarState.Listener {
     private void pushAll() {
         CarState s = CarState.get();
         pushArea();
+        js("window.carSetDark&&carSetDark(" + dark + ")");
         if (s.settingsJson() != null) js("window.carSetSettings&&carSetSettings(" + s.settingsJson() + ")");
         if (s.radarsJson() != null) js("window.carSetRadars&&carSetRadars(" + s.radarsJson() + ")");
         js("window.carSetRoute&&carSetRoute(" + orNull(s.routeJson()) + ")");

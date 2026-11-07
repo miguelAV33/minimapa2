@@ -1,0 +1,12 @@
+{
+  "appId": "io.github.miguelav33.minimapa",
+  "appName": "Minimapa",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#0b0d0c"
+  },
+  "plugins": {
+    "CapacitorHttp": { "enabled": false }
+  }
+}

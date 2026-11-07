@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Minimapa</string>
+    <string name="title_activity_main">Minimapa</string>
+    <string name="package_name">io.github.miguelav33.minimapa</string>
+    <string name="custom_url_scheme">io.github.miguelav33.minimapa</string>
+</resources>

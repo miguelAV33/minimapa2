@@ -1,0 +1,97 @@
+name: Compilar APK
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'data/**'
+      - '**.md'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apk
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    env:
+      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - name: Número de versión y direcciones
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          {
+            echo "VERSION_CODE=${{ github.run_number }}"
+            echo "VERSION_NAME=1.1.${{ github.run_number }}"
+            echo "REMOTE_BASE=https://${OWNER}.github.io/${{ github.event.repository.name }}/"
+            echo "REPO=${{ github.repository }}"
+          } >> "$GITHUB_ENV"
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Preparar la app web y el proyecto Android
+        run: |
+          node scripts/build-web.mjs
+          npx cap sync android
+
+      - name: Clave de firma propia (opcional, secreto KEYSTORE_BASE64)
+        if: env.KEYSTORE_BASE64 != ''
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app/release.keystore
+          echo "KEYSTORE_FILE=release.keystore" >> "$GITHUB_ENV"
+
+      - name: Compilar el APK
+        working-directory: android
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Renombrar
+        run: cp android/app/build/outputs/apk/release/app-release.apk minimapa.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: minimapa-apk
+          path: minimapa.apk
+
+      - name: Publicar la versión para descargar
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notas.md <<'EOF'
+          **Descarga:** minimapa.apk (abajo, en *Assets*).
+
+          1. Abre el enlace en el móvil Android y descarga el APK.
+          2. Ábrelo y permite *Instalar apps de origen desconocido* si te lo pide.
+          3. Abre Minimapa una vez, acepta la ubicación (elige *Permitir siempre* si te deja) y las notificaciones.
+
+          **Android Auto:** abre Android Auto en el móvil → *Ajustes* → toca 10 veces *Versión* para activar el modo desarrollador → menú ⋮ → *Ajustes de desarrollador* → marca *Fuentes desconocidas*. Después Minimapa aparece en el coche.
+
+          Cambios: ${{ github.event.head_commit.message || 'compilación manual' }}
+          EOF
+          gh release create "v${VERSION_NAME}" minimapa.apk \
+            --title "Minimapa ${VERSION_NAME}" \
+            --notes-file notas.md \
+            --latest

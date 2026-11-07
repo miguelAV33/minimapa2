@@ -1,0 +1,24 @@
+{
+  "name": "minimapa",
+  "version": "1.1.0",
+  "private": true,
+  "description": "Navegador GPS personal con mapas de estilo videojuego, rutas con voz, avisos de radares y Android Auto.",
+  "type": "module",
+  "scripts": {
+    "build:web": "node scripts/build-web.mjs",
+    "android": "node scripts/build-web.mjs && npx cap sync android",
+    "test": "node tests/motor.test.mjs && python3 scripts/test_actualizar_datos.py"
+  },
+  "dependencies": {
+    "@capacitor-community/background-geolocation": "1.3.1",
+    "@capacitor-community/keep-awake": "8.0.1",
+    "@capacitor-community/text-to-speech": "8.0.2",
+    "@capacitor/android": "8.6.0",
+    "@capacitor/app": "8.1.2",
+    "@capacitor/core": "8.6.0",
+    "@capacitor/share": "8.0.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.6.0"
+  }
+}

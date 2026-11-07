@@ -1,0 +1,62 @@
+name: Actualizar datos y publicar
+
+on:
+  schedule:
+    - cron: '23 3 * * *'   # cada día de madrugada (hora de Madrid ≈ 04:23 / 05:23)
+    - cron: '41 13 * * *'  # segunda pasada a mediodía para los precios de carburantes
+  workflow_dispatch:       # botón "Run workflow" para lanzarlo a mano
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  actualizar:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar pyproj (coordenadas de Cataluña)
+        run: pip install pyproj || true
+
+      - name: Probar los conversores
+        run: python scripts/test_actualizar_datos.py
+
+      - name: Descargar, convertir y fusionar radares y carburantes
+        run: python scripts/actualizar_datos.py
+
+      - name: Guardar los datos nuevos en el repositorio
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          if git diff --cached --quiet; then
+            echo "Sin cambios en los datos"
+          else
+            git commit -m "Datos: radares y carburantes $(date -u +%Y-%m-%d)"
+            git pull --rebase --autostash || true
+            git push || echo "No se pudo subir el commit (se publicará igualmente)"
+          fi
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

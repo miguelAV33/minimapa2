@@ -6,6 +6,9 @@ on:
     paths-ignore:
       - 'data/**'
       - '**.md'
+      - '.github/workflows/actualizar.yml'
+      - 'scripts/actualizar_datos.py'
+      - 'scripts/test_actualizar_datos.py'
   workflow_dispatch:
 
 permissions:

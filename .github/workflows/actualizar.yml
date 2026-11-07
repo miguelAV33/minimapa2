@@ -48,15 +48,26 @@ jobs:
             echo "Sin cambios en los datos"
           else
             git commit -m "Datos: radares y carburantes $(date -u +%Y-%m-%d)"
-            git pull --rebase --autostash || true
+            # Si otra ejecución subió datos mientras tanto, gana la versión recién descargada
+            git pull --rebase -X theirs origin main || { git rebase --abort; echo "Conflicto al integrar datos"; }
             git push || echo "No se pudo subir el commit (se publicará igualmente)"
           fi
 
+      # Publicación web: requiere Settings → Pages → Source: GitHub Actions
       - uses: actions/configure-pages@v5
+        id: pages
+        continue-on-error: true
 
       - uses: actions/upload-pages-artifact@v3
+        if: steps.pages.outcome == 'success'
         with:
           path: '.'
 
       - id: deploy
+        if: steps.pages.outcome == 'success'
         uses: actions/deploy-pages@v4
+
+      - name: Aviso si GitHub Pages no está activado
+        if: steps.pages.outcome != 'success'
+        run: echo "::warning::GitHub Pages no está activado. Settings → Pages → Source → GitHub Actions"
+

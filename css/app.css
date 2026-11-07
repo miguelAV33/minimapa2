@@ -237,6 +237,7 @@ body:not(.nav) #gpsStatus { top: calc(var(--sat) + 112px); }
 .skin .sw { height: 64px; position: relative; }
 .skin .sw i { position: absolute; }
 .skin .sn { font-family: var(--ui); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; font-size: 14px; padding: 6px 8px 0; }
+.skin .tag-own { margin-left: 6px; font-size: 10px; padding: 1px 5px; background: var(--accent); color: var(--accent-ink); vertical-align: 2px; }
 .skin .sd { font-size: 11.5px; color: var(--muted); padding: 2px 8px 8px; line-height: 1.3; }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13.5px; }
 .kv dt { color: var(--muted); }
@@ -253,7 +254,7 @@ input.field { width: 100%; background: #121614; border: 1px solid var(--line); p
 
 /* Popover de skins */
 #skinPop { position: fixed; top: calc(var(--sat) + 62px); right: calc(var(--sar) + 10px); z-index: 40; width: min(320px, calc(100vw - 20px)); background: var(--panel-solid); border: 1px solid var(--line); border-top: 4px solid var(--accent); padding: 10px; box-shadow: 0 12px 30px rgba(0,0,0,.5); animation: pop .15s ease-out; }
-#skinPop .skins { grid-template-columns: 1fr 1fr; }
+#skinPop .skins { grid-template-columns: 1fr 1fr; max-height: calc(100vh - var(--sat) - 110px); overflow-y: auto; }
 #skinPop .skin .sd { display: none; }
 
 /* ---------- Misión cumplida ---------- */
@@ -320,3 +321,21 @@ body.native #splash .press { visibility: hidden; }
 
 /* Aviso de versión nueva */
 .update-notes { font-size: 13.5px; color: var(--muted); white-space: pre-wrap; line-height: 1.45; max-height: 40vh; overflow-y: auto; background: rgba(255,255,255,.04); padding: 10px; margin: 8px 0 14px; }
+
+/* ---------- Efecto de pantalla de la skin ---------- */
+#mapFx { position: absolute; inset: 0; pointer-events: none; z-index: 1; background: var(--map-fx, none); }
+
+/* ---------- Editor de skins ---------- */
+#skinEditor { position: fixed; left: var(--sal); right: var(--sar); bottom: 0; z-index: 45; max-height: 52vh; display: flex; flex-direction: column; background: var(--panel-solid); border-top: 4px solid var(--accent); box-shadow: 0 -10px 30px rgba(0,0,0,.5); padding: 8px 12px calc(var(--sab) + 8px); animation: up .22s ease-out; }
+#skinEditor .se-head { display: flex; align-items: center; gap: 8px; }
+#skinEditor .se-head .panel-title { flex: 1; margin: 0; }
+#skinEditor .se-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 6px 2px 10px; }
+#skinEditor h3 { font-family: var(--ui); font-weight: 600; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .14em; margin: 14px 0 6px; }
+#skinEditor .se-foot { padding-top: 8px; border-top: 1px solid var(--line); }
+#skinEditor input[type=range] { width: 130px; accent-color: var(--accent); }
+.color-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+.color-cell { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); text-align: center; }
+.color-cell input, #skinEditor .opt input[type=color] { width: 100%; height: 40px; padding: 0; border: 2px solid var(--line); background: none; cursor: pointer; }
+#skinEditor .opt input[type=color] { width: 44px; height: 32px; }
+body.skin-editing #sheet, body.skin-editing #chips, body.skin-editing #fabs, body.skin-editing #top { display: none !important; }
+#skinImport textarea.code { flex: 1; min-height: 160px; }

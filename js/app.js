@@ -2,7 +2,7 @@
 import * as maplibregl from '../vendor/maplibre-gl.mjs';
 import { CONFIG } from './config.js';
 import { $, $$, h, dist, bearing, angDiff, fmtDist, fmtDur, fmtClock, debounce, store, escapeHtml, bboxOf, pointAlong } from './util.js';
-import { SKINS, buildStyle, LABEL_ANCHOR } from './skins.js';
+import { SKINS, buildStyle, LABEL_ANCHOR, BUILTIN_SKINS, EDIT_COLORS, EDIT_OPTIONS, editableFrom, registerSkin, unregisterSkin, cleanSkinDef, skinFx, playerColors } from './skins.js';
 import { attachImages, alertIconURL, blipIconURL } from './blips.js';
 import { ICONS, maneuverSVG } from './icons.js';
 import { speak, sound, unlockAudio, configureVoice, spanishVoices, stopSpeaking } from './voice.js';
@@ -30,6 +30,14 @@ const DEFAULTS = {
 };
 const S = { ...DEFAULTS, ...store.get('settings', {}) };
 S.radarTypes = { ...DEFAULTS.radarTypes, ...(S.radarTypes || {}) };
+
+// Skins creadas con el editor (o importadas de un amigo)
+const customSkins = () => store.get('customSkins', []);
+for (const d of customSkins()) registerSkin(d);
+for (const k of ['skin', 'daySkin', 'nightSkin']) if (!SKINS[S[k]]) S[k] = DEFAULTS[k];
+let previewSkinId = null; // skin que se está probando en el editor
+const curSkinId = () => (previewSkinId && SKINS[previewSkinId] ? previewSkinId : S.skin);
+const curSkin = () => SKINS[curSkinId()] || SKINS.radar;
 function saveSettings() {
   store.set('settings', S);
   carSettings();
@@ -55,18 +63,20 @@ const recents = () => store.get('recents', []);
 // Mapa
 // ======================================================================
 function applySkinVars() {
-  const sk = SKINS[S.skin] || SKINS.radar;
+  const sk = curSkin();
   const r = document.documentElement.style;
   r.setProperty('--accent', sk.accent);
   r.setProperty('--accent-ink', sk.accentInk);
   r.setProperty('--route', sk.route);
+  r.setProperty('--map-fx', skinFx(sk));
+  document.dispatchEvent(new Event('skinchange'));
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#0b0d0c');
 }
 applySkinVars();
 
 const map = new maplibregl.Map({
   container: 'map',
-  style: buildStyle(S.skin, { poi: S.poi, buildings3d: S.buildings3d }),
+  style: buildStyle(curSkinId(), { poi: S.poi, buildings3d: S.buildings3d }),
   center: store.get('lastCenter', CONFIG.startCenter),
   zoom: store.get('lastZoom', CONFIG.startZoom),
   attributionControl: { compact: true },
@@ -75,7 +85,9 @@ const map = new maplibregl.Map({
   dragRotate: true,
   touchPitch: true,
 });
-attachImages(map, () => SKINS[S.skin]);
+attachImages(map, curSkin);
+// Efecto de pantalla de la skin (papel, líneas de monitor…) por encima del mapa
+map.getContainer().insertBefore(h('div', { id: 'mapFx' }), map.getContainer().querySelector('.maplibregl-control-container'));
 map.on('style.load', addOverlays);
 map.on('moveend', debounce(() => {
   const c = map.getCenter();
@@ -107,7 +119,7 @@ function applyPoiMode() {
 
 function addOverlays() {
   applyPoiMode();
-  const sk = SKINS[S.skin];
+  const sk = curSkin();
   const before = map.getLayer(LABEL_ANCHOR) ? LABEL_ANCHOR : undefined;
   const src = (id, data) => { if (!map.getSource(id)) map.addSource(id, { type: 'geojson', data }); };
   src('route', routeGeo());
@@ -223,7 +235,12 @@ radarDB.onChange(() => { const g = radarDB.geojson(); setData('radars', g); carR
 // Marcador del jugador
 // ======================================================================
 const playerEl = h('div', { class: 'player' });
-playerEl.innerHTML = '<div class="halo"></div><svg viewBox="0 0 54 54"><path d="M27 5 43 45 27 36 11 45Z" fill="#f5f5f5" stroke="#0d0d0d" stroke-width="2.6" stroke-linejoin="round"/><path d="M27 12 37.5 39 27 33Z" fill="#cfcfcf"/></svg>';
+function paintPlayer() {
+  const { fill, stroke } = playerColors(curSkin());
+  playerEl.innerHTML = `<div class="halo"></div><svg viewBox="0 0 54 54"><path d="M27 5 43 45 27 36 11 45Z" fill="${fill}" stroke="${stroke}" stroke-width="2.6" stroke-linejoin="round"/><path d="M27 12 37.5 39 27 33Z" fill="${fill}" opacity=".78" style="mix-blend-mode:multiply"/></svg>`;
+}
+paintPlayer();
+document.addEventListener('skinchange', paintPlayer);
 const player = new maplibregl.Marker({ element: playerEl, rotationAlignment: 'map', pitchAlignment: 'map' });
 let playerOnMap = false;
 const anim = { from: null, to: null, t0: 0, dur: 900, rFrom: 0, rTo: 0, raf: 0 };
@@ -724,7 +741,7 @@ function nearPoint() {
 }
 
 function placeItem(p, onclick, right) {
-  const icon = p.blip ? h('img', { src: blipIconURL(p.blip, SKINS[S.skin]), alt: '' }) : h('span', { html: ICONS.pin });
+  const icon = p.blip ? h('img', { src: blipIconURL(p.blip, curSkin()), alt: '' }) : h('span', { html: ICONS.pin });
   return h('button', { class: 'item', onclick },
     h('span', { class: 'ic' }, icon),
     h('span', { class: 'tx' }, h('div', { class: 'tt' }, p.name), p.address ? h('div', { class: 'sub' }, p.address) : null),
@@ -737,7 +754,7 @@ function showSearchHome() {
   const quick = h('div', { class: 'row' },
     h('button', { class: 'btn', onclick: () => (home ? goTo(home) : toast('Busca tu casa y pulsa «Casa» para guardarla')), html: `${ICONS.home}<span>Casa</span>` }),
     h('button', { class: 'btn', onclick: () => (work ? goTo(work) : toast('Busca tu trabajo y pulsa «Trabajo» para guardarlo')), html: `${ICONS.work}<span>Trabajo</span>` }));
-  const cats = h('div', { class: 'row', style: { gap: '6px' } }, ...CATEGORIES.map((c) => h('button', { class: 'chip', onclick: () => runCategory(c) }, h('img', { src: blipIconURL(c.blip, SKINS[S.skin]), alt: '' }), c.label)));
+  const cats = h('div', { class: 'row', style: { gap: '6px' } }, ...CATEGORIES.map((c) => h('button', { class: 'chip', onclick: () => runCategory(c) }, h('img', { src: blipIconURL(c.blip, curSkin()), alt: '' }), c.label)));
   const fl = favs();
   const rl = recents();
   openSheet(h('div', null,
@@ -1034,7 +1051,7 @@ function skinCards(onPick) {
       h('i', { style: { right: '0', top: '0', width: '30%', height: '30%', background: sk.water } }),
       h('i', { style: { left: '6%', bottom: '10%', width: '18%', height: '28%', background: sk.park } }),
       h('i', { style: { left: '10%', right: '20%', top: '70%', height: '5px', background: sk.route, boxShadow: `0 0 8px ${sk.route}` } })),
-    h('div', { class: 'sn' }, sk.name), h('div', { class: 'sd' }, sk.desc))));
+    h('div', { class: 'sn' }, sk.name, sk.custom ? h('span', { class: 'tag-own' }, 'Tuya') : null), h('div', { class: 'sd' }, sk.desc))));
 }
 
 function setSkin(id) {
@@ -1062,7 +1079,144 @@ function checkAutoSkin(fix) {
   if (SKINS[want] && want !== S.skin) setSkin(want);
 }
 function reloadStyle() {
-  map.setStyle(buildStyle(S.skin, { poi: S.poi, buildings3d: S.buildings3d }), { diff: false });
+  map.setStyle(buildStyle(curSkinId(), { poi: S.poi, buildings3d: S.buildings3d }), { diff: false });
+}
+
+// ======================================================================
+// Editor de skins
+// ======================================================================
+const skinDefOf = (id) => customSkins().find((d) => d.id === id) || null;
+function draftFrom(sk, extra = {}) {
+  const e = editableFrom(sk);
+  const colors = Object.fromEntries(EDIT_COLORS.map(([k]) => [k, e[k]]));
+  const opts = Object.fromEntries(Object.entries(e).filter(([k]) => !colors[k] && !EDIT_COLORS.some(([c]) => c === k)));
+  return { base: sk.custom ? sk.base : sk.id, colors, opts, ...extra };
+}
+function saveCustomSkin(def) {
+  const list = customSkins().filter((d) => d.id !== def.id);
+  list.push(def);
+  store.set('customSkins', list);
+  registerSkin(def);
+}
+function skinCode(def) {
+  return JSON.stringify({ minimapaSkin: 1, id: def.id, name: def.name, base: def.base, colors: def.colors, opts: def.opts });
+}
+async function shareSkin(def) {
+  const text = `Skin «${def.name}» para MiniMapa. Copia todo este mensaje y pégalo en Menú → Mapa → Importar skin:\n\n${skinCode(def)}`;
+  if (await shareText(`Skin ${def.name}`, text)) return;
+  try { await navigator.clipboard.writeText(text); toast('Código copiado: pégaselo a tu amigo'); }
+  catch { openSkinImport(skinCode(def), true); }
+}
+
+function openSkinEditor(def) {
+  closeSkinPop(); $('#menu')?.remove(); closeSkinEditor(false);
+  const isNew = !def;
+  const original = def ? JSON.parse(JSON.stringify(def)) : null;
+  const d = def ? JSON.parse(JSON.stringify(def)) : draftFrom(curSkin(), { id: `custom-${Date.now().toString(36)}`, name: 'Mi skin' });
+  d.opts = { ...draftFrom(SKINS[d.base] || SKINS.radar).opts, ...d.opts };
+  const preview = debounce(() => {
+    registerSkin(d); previewSkinId = d.id; applySkinVars(); reloadStyle();
+  }, 380);
+  const lsw = (key, label) => {
+    const el = h('button', { class: `switch${d.opts[key] ? ' on' : ''}`, role: 'switch', 'aria-checked': String(!!d.opts[key]), 'aria-label': label });
+    return h('div', { class: 'opt', onclick: () => { d.opts[key] = !d.opts[key]; el.classList.toggle('on', d.opts[key]); el.setAttribute('aria-checked', String(d.opts[key])); preview(); } },
+      h('div', { class: 'ol' }, h('div', { class: 'ot' }, label)), el);
+  };
+  const lsel = (key, label) => h('div', { class: 'opt' }, h('div', { class: 'ol' }, h('div', { class: 'ot' }, label)),
+    h('select', { class: 'sel', onchange: (e) => { d.opts[key] = e.target.value; preview(); } }, ...EDIT_OPTIONS[key].map(([v, l]) => h('option', { value: v, selected: d.opts[key] === v }, l))));
+  const colorGrid = h('div', { class: 'color-grid' });
+  const paintColors = () => colorGrid.replaceChildren(...EDIT_COLORS.map(([k, l]) => h('label', { class: 'color-cell' },
+    h('input', { type: 'color', value: d.colors[k], oninput: (e) => { d.colors[k] = e.target.value; preview(); } }), h('span', null, l))));
+  paintColors();
+  const lineOn = h('button', { class: `switch${d.opts.centerLine ? ' on' : ''}`, role: 'switch', 'aria-label': 'Línea central' });
+  const lineColor = h('input', { type: 'color', value: d.opts.centerLine || '#f2d21b', oninput: (e) => { d.opts.centerLine = e.target.value; lineOn.classList.add('on'); preview(); } });
+  const width = h('input', { type: 'range', min: '0.5', max: '1.6', step: '0.05', value: String(d.opts.roadWidthMult || 1), oninput: (e) => { d.opts.roadWidthMult = Number(e.target.value); preview(); } });
+  const opts = h('div', null);
+  const paintOpts = () => opts.replaceChildren(
+    lsw('glow', 'Brillo de neón en las vías'),
+    lsw('casingOff', 'Calles sin borde (trazo fino)'),
+    lsw('labelItalic', 'Rótulos en cursiva'),
+    lsw('uppercaseDistricts', 'Barrios en mayúsculas'),
+    lsw('shields', 'Placas con el número de carretera'),
+    h('div', { class: 'opt' }, h('div', { class: 'ol' }, h('div', { class: 'ot' }, 'Línea central en carreteras')), lineColor,
+      (lineOn.onclick = () => { d.opts.centerLine = d.opts.centerLine ? '' : lineColor.value; lineOn.classList.toggle('on', !!d.opts.centerLine); preview(); }, lineOn)),
+    h('div', { class: 'opt' }, h('div', { class: 'ol' }, h('div', { class: 'ot' }, 'Grosor de las calles')), width),
+    lsel('blipShape', 'Iconos de lugares'),
+    lsel('buildingMode', 'Edificios'),
+    lsel('fx', 'Efecto de pantalla'),
+  );
+  paintOpts();
+  const name = h('input', { class: 'field', type: 'text', maxlength: '28', value: d.name, placeholder: 'Nombre de la skin', oninput: (e) => { d.name = e.target.value; } });
+  const baseSel = h('select', { class: 'sel', onchange: (e) => {
+    const nd = draftFrom(SKINS[e.target.value]);
+    d.base = nd.base; d.colors = nd.colors; d.opts = nd.opts;
+    paintColors(); lineColor.value = d.opts.centerLine || '#f2d21b'; lineOn.classList.toggle('on', !!d.opts.centerLine); width.value = String(d.opts.roadWidthMult || 1); paintOpts(); preview();
+  } }, ...BUILTIN_SKINS.map((id) => h('option', { value: id, selected: id === d.base }, SKINS[id].name)));
+  let delArmed = false;
+  const delBtn = isNew ? null : h('button', { class: 'btn danger small', html: `${ICONS.trash}<span>Borrar</span>`, onclick: (e) => {
+    if (!delArmed) { delArmed = true; e.currentTarget.querySelector('span').textContent = '¿Seguro?'; return; }
+    store.set('customSkins', customSkins().filter((x) => x.id !== d.id));
+    unregisterSkin(d.id); previewSkinId = null;
+    for (const k of ['skin', 'daySkin', 'nightSkin']) if (S[k] === d.id) S[k] = DEFAULTS[k];
+    closeSkinEditor(false); setSkin(S.skin); toast('Skin borrada');
+  } });
+  const panel = h('section', { id: 'skinEditor' },
+    h('div', { class: 'se-head' }, h('div', { class: 'panel-title' }, isNew ? 'Nueva skin' : 'Editar skin'),
+      h('button', { class: 'icon-btn', 'aria-label': 'Cancelar', html: ICONS.close, onclick: () => closeSkinEditor(true) })),
+    h('div', { class: 'se-body' },
+      name,
+      h('div', { class: 'opt' }, h('div', { class: 'ol' }, h('div', { class: 'ot' }, 'Partir de'), h('div', { class: 'od' }, 'Carga los colores y el estilo de otra skin')), baseSel),
+      h('h3', null, 'Colores'), colorGrid,
+      h('h3', null, 'Estilo'), opts),
+    h('div', { class: 'row se-foot' },
+      h('button', { class: 'btn primary', onclick: () => {
+        d.name = (d.name || '').trim() || 'Mi skin';
+        const clean = cleanSkinDef(d);
+        if (!clean) { toast('Faltan colores'); return; }
+        saveCustomSkin(clean); previewSkinId = null; closeSkinEditor(false); pickSkin(clean.id); toast(`Skin «${clean.name}» guardada`);
+      } }, 'Guardar'),
+      h('button', { class: 'btn small', html: `${ICONS.share || ''}<span>Compartir</span>`, onclick: () => { const clean = cleanSkinDef({ ...d, name: (d.name || '').trim() || 'Mi skin' }); if (clean) shareSkin(clean); } }),
+      delBtn));
+  panel._cancel = () => {
+    if (original) registerSkin(original); else unregisterSkin(d.id);
+  };
+  document.body.classList.add('skin-editing');
+  document.body.append(panel);
+  preview();
+}
+function closeSkinEditor(restore) {
+  const p = $('#skinEditor');
+  if (!p) return;
+  if (restore) p._cancel?.();
+  p.remove();
+  document.body.classList.remove('skin-editing');
+  if (previewSkinId || restore) { previewSkinId = null; applySkinVars(); reloadStyle(); }
+}
+
+function openSkinImport(prefill = '', readOnly = false) {
+  const ta = h('textarea', { class: 'code', placeholder: 'Pega aquí el mensaje o el código de la skin', spellcheck: 'false' });
+  ta.value = prefill;
+  if (readOnly) ta.readOnly = true;
+  const file = h('input', { type: 'file', accept: '.json,.txt,application/json,text/plain', hidden: true, onchange: async (e) => { const f = e.target.files?.[0]; if (f) ta.value = await f.text(); } });
+  const ov = h('div', { class: 'overlay', id: 'skinImport' },
+    h('div', { class: 'menu-head' }, h('div', { class: 'panel-title', style: { flex: '1' } }, readOnly ? 'Código de la skin' : 'Importar skin'), h('button', { class: 'icon-btn', onclick: () => ov.remove(), html: ICONS.close, 'aria-label': 'Cerrar' })),
+    h('p', { class: 'legal' }, readOnly ? 'Copia este código y mándaselo a tu amigo. Él lo pega en Menú → Mapa → Importar skin.' : 'Pega el mensaje que te han pasado (puede llevar texto alrededor) o abre un archivo .json.'),
+    ta, file,
+    readOnly ? h('div', { class: 'row', style: { marginTop: '10px' } }, h('button', { class: 'btn primary', onclick: () => { ta.select(); try { document.execCommand('copy'); toast('Copiado'); } catch { /* sin portapapeles */ } } }, 'Copiar'))
+      : h('div', { class: 'row', style: { marginTop: '10px' } },
+        h('button', { class: 'btn small', onclick: () => file.click() }, 'Abrir archivo'),
+        h('button', { class: 'btn primary', onclick: () => {
+          const def = parseSkinText(ta.value);
+          if (!def) { toast('No encuentro una skin válida en ese texto'); return; }
+          saveCustomSkin(def); ov.remove(); $('#menu')?.remove(); pickSkin(def.id); toast(`Skin «${def.name}» añadida`);
+        } }, 'Importar')));
+  document.body.append(ov);
+  if (!readOnly) setTimeout(() => ta.focus(), 50);
+}
+function parseSkinText(text) {
+  const a = String(text || '').indexOf('{'), b = String(text || '').lastIndexOf('}');
+  if (a < 0 || b <= a) return null;
+  try { return cleanSkinDef(JSON.parse(text.slice(a, b + 1))); } catch { return null; }
 }
 
 function openMenu(tab = 'mapa') {
@@ -1075,7 +1229,7 @@ function openMenu(tab = 'mapa') {
     tabBar, body);
   const show = (t) => {
     tabBar.replaceChildren(...tabs.map(([k, l]) => h('button', { class: `tab${k === t ? ' on' : ''}`, onclick: () => show(k) }, l)));
-    body.replaceChildren(...menuTab(t, () => show(t)));
+    body.replaceChildren(...menuTab(t, () => show(t)).filter(Boolean));
     body.scrollTop = 0;
   };
   show(tab);
@@ -1090,6 +1244,15 @@ function menuTab(t, rerender) {
       sw('autoSkin', 'Cambiar sola de día a noche', 'Según la salida y la puesta de sol donde estés', () => { lastSkinCheck = 0; checkAutoSkin(); rerender(); }),
       S.autoSkin ? selectOpt('daySkin', 'Skin de día', Object.values(SKINS).map((k) => [k.id, k.name]), () => { lastSkinCheck = 0; checkAutoSkin(); }) : null,
       S.autoSkin ? selectOpt('nightSkin', 'Skin de noche', Object.values(SKINS).map((k) => [k.id, k.name]), () => { lastSkinCheck = 0; checkAutoSkin(); }) : null,
+      h('h3', null, 'Tus skins'),
+      ...customSkins().map((d) => h('div', { class: 'opt' },
+        h('div', { class: 'ol' }, h('div', { class: 'ot' }, d.name), h('div', { class: 'od' }, `A partir de ${SKINS[d.base]?.name || d.base}`)),
+        h('button', { class: 'btn small', onclick: () => openSkinEditor(skinDefOf(d.id)) }, 'Editar'),
+        h('button', { class: 'btn small', onclick: () => shareSkin(d) }, 'Pasar'))),
+      customSkins().length ? null : h('p', { class: 'legal' }, 'Crea tu propia skin cambiando los colores y el estilo, con el mapa de fondo para ver cómo queda. Luego se la puedes pasar a tu amigo.'),
+      h('div', { class: 'row', style: { marginTop: '8px' } },
+        h('button', { class: 'btn small primary', onclick: () => openSkinEditor(null) }, 'Crear skin'),
+        h('button', { class: 'btn small', onclick: () => openSkinImport() }, 'Importar skin')),
       h('h3', null, 'Capas'),
       sw('poi', 'Lugares en el mapa', 'Iconos de gasolineras, tiendas, restaurantes…', reloadStyle),
       sw('showRadars', 'Radares en el mapa', null, () => ['radars', 'radar-sections'].forEach((l) => map.getLayer(l) && map.setLayoutProperty(l, 'visibility', S.showRadars ? 'visible' : 'none'))),
@@ -1375,7 +1538,8 @@ function carRoute() {
 function carRadars(g) { carCall('setRadars', { json: JSON.stringify(g || radarDB.geojson()) }); }
 
 function carSettings() {
-  carCall('setSettings', { json: JSON.stringify({ skin: S.skin, buildings3d: S.buildings3d, poi: S.poi, showRadars: S.showRadars, headingUp: S.headingUp, tilt: S.tilt }) });
+  const def = SKINS[S.skin]?.custom ? skinDefOf(S.skin) : null;
+  carCall('setSettings', { json: JSON.stringify({ skin: S.skin, skinDef: def, buildings3d: S.buildings3d, poi: S.poi, showRadars: S.showRadars, headingUp: S.headingUp, tilt: S.tilt }) });
 }
 
 function carPlaces() {
@@ -1482,6 +1646,7 @@ function initNative() {
   Native.app?.addListener('backButton', () => {
     const ov = [...document.querySelectorAll('.overlay')].pop();
     if (ov) { ov.remove(); return; }
+    if ($('#skinEditor')) { closeSkinEditor(true); return; }
     if (skinPop) { closeSkinPop(); return; }
     if (st.mode === 'preview') { cancelPreview(); return; }
     if (st.sheetView) { closeSheet(); st.pin = null; refreshPin(); return; }
@@ -1633,7 +1798,7 @@ function buildUI() {
   $('#btnOverview').innerHTML = ICONS.overview;
   $('#btnEnd').innerHTML = ICONS.close;
 
-  $('#chips').replaceChildren(...CATEGORIES.slice(0, 9).map((c) => h('button', { class: 'chip', dataset: { id: c.id }, onclick: () => runCategory(c) }, h('img', { src: blipIconURL(c.blip, SKINS[S.skin]), alt: '' }), c.label)));
+  $('#chips').replaceChildren(...CATEGORIES.slice(0, 9).map((c) => h('button', { class: 'chip', dataset: { id: c.id }, onclick: () => runCategory(c) }, h('img', { src: blipIconURL(c.blip, curSkin()), alt: '' }), c.label)));
 
   const q = $('#q');
   q.addEventListener('focus', () => { if (!q.value.trim()) showSearchHome(); });
@@ -1720,4 +1885,4 @@ if (!NATIVE && 'serviceWorker' in navigator && (location.protocol === 'https:' |
 }
 
 // Ganchos para pruebas y depuración desde la consola
-window.__mm = { onCarAction, carLive, navigateNow, map, st, S, radarDB, nav, watcher, processFix, previewRoute, startNav, endNav, selectPlace, toast, runCategory, openMenu, setSkin, pointAlong, angDiff };
+window.__mm = { onCarAction, carLive, navigateNow, map, st, S, radarDB, nav, watcher, processFix, previewRoute, startNav, endNav, selectPlace, toast, runCategory, openMenu, setSkin, pointAlong, angDiff, openSkinEditor, openSkinImport, SKINS, curSkinId };

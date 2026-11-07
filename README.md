@@ -4,7 +4,8 @@ Navegador GPS personal que funciona en el navegador del móvil y se instala como
 
 ## Qué hace
 
-- **4 skins de mapa**: *Minimapa* (radar oscuro y ruta morada), *Retro 2004*, *Neón 86* y *Atlas* (mapa de papel). Se cambian al momento, incluso navegando.
+- **9 skins de mapa**: *Minimapa* (radar oscuro y ruta morada), *Retro 2004*, *Neón 86*, *Atlas* (mapa de papel), *Frontera 1899* (papel envejecido y tinta, como los mapas del lejano oeste), *Megaciudad 2077* (negro y amarillo eléctrico con líneas de pantalla), *Terminal* (escáner azul con edificios en alambre), *Circuito* (juego de carreras con autopistas de borde naranja) y *Pixel 97* (vista cenital clásica con aceras y línea amarilla). Se cambian al momento, incluso navegando.
+- **Editor de skins**: Menú → Mapa → *Crear skin*. Eliges de qué skin partir, cambias 10 colores (fondo, agua, parques, edificios, autopistas, carreteras, calles, rótulos, ruta y detalles) y el estilo (brillo de neón, calles sin borde, rótulos en cursiva, línea central, grosor de calles, forma de los iconos, edificios y efecto de pantalla). El mapa cambia mientras editas. Con *Pasar* se la mandas a tu amigo por WhatsApp o lo que quieras, y él la añade con *Importar skin* pegando el mensaje. Las skins propias también se ven en Android Auto.
 - **Todos los sitios en el mapa**: gasolineras, parkings, restaurantes, farmacias, hospitales, cajeros, talleres, hoteles, puntos de carga… con iconos tipo "blip".
 - **Búsqueda** de direcciones y lugares, pin con pulsación larga, favoritos, Casa y Trabajo, y recientes.
 - **Rutas** con alternativas, paradas intermedias, opciones para evitar peajes o autopistas, número de radares en cada ruta y hora de llegada.
@@ -99,7 +100,8 @@ python scripts/actualizar_datos.py        # actualizar los datos a mano
 
 ## Personalizar
 
-- **Skins**: `js/skins.js`. Cada skin es un objeto de colores (fondo, agua, parques, cada tipo de vía, ruta, iconos…). Copia una, cambia los colores y aparecerá en el menú.
+- **Skins**: `js/skins.js`. Cada skin es un objeto de colores (fondo, agua, parques, cada tipo de vía, ruta, iconos…) más opciones de estilo (`blipShape`, `buildingMode`, `fx`, `centerLine`, `casingOff`, `labelItalic`, `roadWidthMult`). Copia una, cambia los colores y aparecerá en el menú. Las skins del editor se guardan en el móvil y se generan con `deriveSkin()`.
+- **Sobre los juegos**: las skins están inspiradas en estilos de mapa habituales en los videojuegos, pero no usan mapas, iconos, tipografías ni nombres de ningún juego.
 - **Iconos del mapa**: `js/blips.js` (se dibujan con canvas).
 - **Servicios** (mapa, rutas, búsqueda): `js/config.js`.
 - **Android Auto**: `android/app/src/main/java/io/github/miguelav33/minimapa/car/` (plantillas del coche y puente con la app) y `js/car.js` (mapa del coche).

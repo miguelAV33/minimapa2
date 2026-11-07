@@ -1,5 +1,5 @@
 // Service worker: la app funciona sin conexión y guarda en caché el mapa que ya has visto.
-const VERSION = 'minimapa-1.2.0';
+const VERSION = 'minimapa-1.3.0';
 const SHELL_CACHE = `${VERSION}-app`;
 const TILE_CACHE = 'minimapa-tiles';
 const MAX_TILES = 6000;

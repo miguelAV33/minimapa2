@@ -206,11 +206,20 @@ function drawGlyph(ctx, spec, cx, cy, scale, bg) {
 function makeBlip(kind, skin, size = 22) {
   const color = BLIP_COLORS[kind] || BLIP_COLORS.dot;
   const { c, ctx } = canvas(size, size);
-  const r = size / 2 - 1.2;
-  ctx.fillStyle = skin.blipBg; ctx.beginPath(); ctx.arc(size / 2, size / 2, r, 0, Math.PI * 2); ctx.fill();
-  ctx.lineWidth = 1.6; ctx.strokeStyle = color; ctx.stroke();
-  ctx.fillStyle = color; ctx.strokeStyle = color;
-  drawGlyph(ctx, POI_GLYPH[kind] || 'dot', size / 2, size / 2, size * 0.27, skin.blipBg);
+  const r = size / 2 - 1.2, m = size / 2;
+  const shape = skin.blipShape || 'circle';
+  // En los mapas de tinta todos los iconos van en el mismo color, como dibujados a pluma
+  const ink = shape === 'ink' ? (skin.blipInk || skin.text) : color;
+  ctx.fillStyle = skin.blipBg; ctx.beginPath();
+  if (shape === 'square') roundRect(ctx, 1.2, 1.2, size - 2.4, size - 2.4, 2.5);
+  else if (shape === 'diamond') { ctx.moveTo(m, 0.8); ctx.lineTo(size - 0.8, m); ctx.lineTo(m, size - 0.8); ctx.lineTo(0.8, m); ctx.closePath(); }
+  else ctx.arc(m, m, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.lineWidth = shape === 'ink' ? 1.2 : 1.6; ctx.strokeStyle = ink;
+  if (shape === 'ink') ctx.setLineDash([2.2, 1.4]);
+  ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = ink; ctx.strokeStyle = ink;
+  drawGlyph(ctx, POI_GLYPH[kind] || 'dot', m, m, size * (shape === 'diamond' ? 0.23 : 0.27), skin.blipBg);
   return toImage(c, ctx);
 }
 

@@ -2,7 +2,7 @@
 // la ruta, los radares y los avisos a través de CarMapRenderer.java.
 import * as maplibregl from '../vendor/maplibre-gl.mjs';
 import { CONFIG } from './config.js';
-import { SKINS, buildStyle, LABEL_ANCHOR } from './skins.js';
+import { SKINS, buildStyle, LABEL_ANCHOR, registerSkin, skinFx, playerColors, lum } from './skins.js';
 import { attachImages, alertIconURL } from './blips.js';
 import { fmtDist, clamp } from './util.js';
 
@@ -11,8 +11,12 @@ const EMPTY = { type: 'FeatureCollection', features: [] };
 
 const S = { skin: 'radar', buildings3d: false, poi: true, showRadars: true, headingUp: true, tilt: true };
 let dark = false;
-// De noche el coche no usa la skin clara (deslumbra)
-const carSkin = () => (dark && S.skin === 'atlas' ? 'radar' : S.skin);
+let skinKey = '';
+// De noche el coche no usa skins claras (deslumbran)
+const carSkin = () => {
+  const id = SKINS[S.skin] ? S.skin : 'radar';
+  return dark && lum(SKINS[id].bg) > 0.35 ? 'radar' : id;
+};
 let radars = EMPTY;
 let route = null; // {coords, dest, stops}
 let live = null;
@@ -34,9 +38,15 @@ const map = new maplibregl.Map({
 attachImages(map, () => SKINS[carSkin()]);
 const foldAttribution = () => document.querySelectorAll('.maplibregl-ctrl-attrib.maplibregl-compact-show').forEach((e) => e.classList.remove('maplibregl-compact-show'));
 map.on('load', foldAttribution);
+const fxEl = document.createElement('div');
+fxEl.id = 'mapFx';
+map.getContainer().insertBefore(fxEl, map.getContainer().querySelector('.maplibregl-control-container'));
 
 function applySkinVars() {
-  document.documentElement.style.setProperty('--accent', (SKINS[carSkin()] || SKINS.radar).accent);
+  const sk = SKINS[carSkin()] || SKINS.radar;
+  document.documentElement.style.setProperty('--accent', sk.accent);
+  fxEl.style.background = skinFx(sk);
+  paintPlayer();
 }
 
 function src(id, data) {
@@ -104,7 +114,11 @@ function routePtsGeo() {
 // ---- Marcador ----
 const el = document.createElement('div');
 el.className = 'player';
-el.innerHTML = '<svg viewBox="0 0 54 54"><path d="M27 5 43 45 27 36 11 45Z" fill="#f5f5f5" stroke="#0d0d0d" stroke-width="2.6" stroke-linejoin="round"/><path d="M27 12 37.5 39 27 33Z" fill="#cfcfcf"/></svg>';
+function paintPlayer() {
+  const { fill, stroke } = playerColors(SKINS[carSkin()] || SKINS.radar);
+  el.innerHTML = `<svg viewBox="0 0 54 54"><path d="M27 5 43 45 27 36 11 45Z" fill="${fill}" stroke="${stroke}" stroke-width="2.6" stroke-linejoin="round"/><path d="M27 12 37.5 39 27 33Z" fill="${fill}" opacity=".78" style="mix-blend-mode:multiply"/></svg>`;
+}
+paintPlayer();
 const player = new maplibregl.Marker({ element: el, rotationAlignment: 'map', pitchAlignment: 'map' });
 let onMap = false;
 const anim = { from: null, to: null, t0: 0, r0: 0, r1: 0, raf: 0 };
@@ -201,7 +215,13 @@ window.carSetDark = (d) => {
 
 window.carSetSettings = (s) => {
   const before = carSkin();
-  const needs = !!s.buildings3d !== !!S.buildings3d || s.poi !== S.poi;
+  let needs = !!s.buildings3d !== !!S.buildings3d || s.poi !== S.poi;
+  // Skin personalizada creada en el móvil: se registra aquí también
+  if (s.skinDef) {
+    const key = JSON.stringify(s.skinDef);
+    if (key !== skinKey) { skinKey = key; registerSkin(s.skinDef); needs = true; }
+  }
+  delete s.skinDef;
   Object.assign(S, s);
   applySkinVars();
   if (needs || carSkin() !== before) restyle();

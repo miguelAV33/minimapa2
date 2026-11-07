@@ -1,1 +1,28 @@
-<!DOCTYPE html><title>car</title>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>Minimapa · coche</title>
+  <link rel="stylesheet" href="vendor/maplibre-gl.css">
+  <link rel="stylesheet" href="css/car.css">
+</head>
+<body>
+  <div id="map"></div>
+  <div id="flash"></div>
+  <div id="speedo"><div id="speedVal">0</div><div id="speedUnit">km/h</div><div id="limitSign" hidden></div></div>
+  <div id="alertCard" hidden>
+    <div class="a-top"><img alt=""><div class="a-type"></div></div>
+    <div class="a-row"><div class="a-dist"></div><div class="a-lim" hidden></div></div>
+    <div class="a-bar"><i></i></div>
+  </div>
+  <div id="sectionCard" hidden><div class="s-t">Tramo · velocidad media</div><div class="s-avg"></div><div class="s-sub"></div></div>
+  <div id="street" hidden></div>
+  <div id="wait">
+    <div class="w-title">MINI<span>MAPA</span></div>
+    <div class="w-sub">Abre Minimapa en el móvil</div>
+    <div class="w-note">La app del teléfono calcula la ruta y los avisos. Ábrela una vez y déjala en segundo plano.</div>
+  </div>
+  <script type="module" src="js/car.js"></script>
+</body>
+</html>

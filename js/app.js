@@ -11,6 +11,7 @@ import { NavEngine, RouteSimulator } from './nav.js';
 import { RadarDB, RadarWatcher, RADAR_TYPES, REPORT_TYPES, radarsOnRoute } from './radars.js';
 import { searchPlaces, reverse, searchCategory, CATEGORIES } from './search.js';
 import { loadFuel, nearestFuel, FUELS, fmtPrice } from './fuel.js';
+import { NATIVE, Native, BUILD, startNativeGps, openNativeSettings, nativeKeepAwake, shareText, checkForUpdate, apkLink } from './native.js';
 
 // ======================================================================
 // Ajustes
@@ -29,6 +30,7 @@ const S = { ...DEFAULTS, ...store.get('settings', {}) };
 S.radarTypes = { ...DEFAULTS.radarTypes, ...(S.radarTypes || {}) };
 function saveSettings() {
   store.set('settings', S);
+  carSettings();
   configureVoice({ enabled: S.voice, voiceURI: S.voiceURI, volume: S.volume, soundStyle: S.soundStyle });
 }
 configureVoice({ enabled: S.voice, voiceURI: S.voiceURI, volume: S.volume, soundStyle: S.soundStyle });
@@ -199,9 +201,9 @@ function pinGeo() {
 }
 const refreshRoutes = () => { setData('route', routeGeo()); setData('routePts', routePtsGeo()); };
 const refreshResults = () => setData('results', resultsGeo());
-const refreshFavs = () => setData('favs', favsGeo());
+const refreshFavs = () => { setData('favs', favsGeo()); carPlaces(); };
 const refreshPin = () => setData('pin', pinGeo());
-radarDB.onChange(() => setData('radars', radarDB.geojson()));
+radarDB.onChange(() => { const g = radarDB.geojson(); setData('radars', g); carRadars(g); });
 
 // ======================================================================
 // Marcador del jugador
@@ -270,6 +272,15 @@ function followCamera(pos, rot, fix, ns, instant = false) {
 // GPS, brújula y bucle principal
 // ======================================================================
 function startGps() {
+  if (NATIVE && Native.geo) {
+    startNativeGps((f) => { if (!st.sim) processFix(f); }, (err) => {
+      if (err?.code === 'NOT_AUTHORIZED') {
+        toast('Minimapa necesita la ubicación. Te abro los ajustes para permitirla.', 6000);
+        setTimeout(openNativeSettings, 2500);
+      } else if (!st.fix) toast('Buscando señal GPS…');
+    }).catch(() => toast('No se pudo iniciar el GPS'));
+    return;
+  }
   if (!('geolocation' in navigator)) { toast('Este navegador no da acceso al GPS'); return; }
   navigator.geolocation.watchPosition(onPosition, onGpsError, { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
 }
@@ -346,6 +357,7 @@ function processFix(fix) {
   else $('#btnLocate').classList.add('attn');
   updateStreetPill();
   freeDriveExtras(fix, ns);
+  carLive(fix, ns, rs, pos, rot);
 }
 
 function freeDriveExtras(fix, ns) {
@@ -501,6 +513,7 @@ function startNav(simulate) {
   nav.trafficFactor = st.traffic ? st.traffic.travel / Math.max(1, st.traffic.noTraffic) : 1;
   watcher.setRoute(route);
   refreshRoutes();
+  carRoute();
   ['#navTop', '#navBottom', '#speedo'].forEach((s) => { $(s).hidden = false; });
   updateTrafficLabel();
   setFollow(true);
@@ -524,6 +537,7 @@ function loadLimits(route) {
 async function reroute(fix) {
   if (st.rerouting || !st.dest) return;
   st.rerouting = true;
+  carLiveNow();
   sound('reroute');
   speak('Recalculando.');
   toast('Recalculando ruta…');
@@ -536,6 +550,7 @@ async function reroute(fix) {
     watcher.setRoute(r);
     st.sim?.setRoute(r);
     refreshRoutes();
+    carRoute();
     loadLimits(r);
   } catch (e) {
     console.warn(e);
@@ -543,6 +558,7 @@ async function reroute(fix) {
   } finally {
     st.rerouting = false;
   }
+  carLiveNow();
 }
 
 function onArrive() {
@@ -562,6 +578,7 @@ function endNav() {
   $('#flash').classList.remove('on');
   stopSpeaking();
   refreshRoutes();
+  carRoute();
   requestWakeLock();
   if (st.fix) { map.easeTo({ pitch: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: 600 }); }
 }
@@ -729,6 +746,7 @@ function addRecent(p) {
   const list = recents().filter((x) => !(Math.abs(x.lat - p.lat) < 1e-5 && Math.abs(x.lon - p.lon) < 1e-5));
   list.unshift({ id: p.id, name: p.name, address: p.address, lat: p.lat, lon: p.lon });
   store.set('recents', list.slice(0, 15));
+  carPlaces();
 }
 
 function goTo(p) {
@@ -1119,6 +1137,8 @@ function menuTab(t, rerender) {
   }
   // info
   return [
+    NATIVE ? h('h3', null, 'Android Auto') : null,
+    NATIVE ? h('p', { class: 'legal' }, 'Abre Minimapa en el móvil antes de conectar el coche (puede quedarse en segundo plano). En Android Auto: Ajustes → toca 10 veces «Versión» → ⋮ → Ajustes de desarrollador → marca «Fuentes desconocidas». En el coche verás el mapa con tu skin, las maniobras, los radares y el botón Destinos.') : null,
     h('h3', null, 'Cómo se usa'),
     h('p', { class: 'legal' }, 'Busca un sitio o mantén pulsado el mapa, pulsa «Ir» y luego «Iniciar». «Simular» recorre la ruta sin moverte (ideal para probar los avisos). El botón del triángulo guarda reportes en tu posición. Sin ruta, la app sigue avisando de radares y mostrando el límite de la vía.'),
     h('h3', null, 'Datos y créditos'),
@@ -1131,7 +1151,13 @@ function menuTab(t, rerender) {
     ].join('<br><br>') }),
     h('h3', null, 'Aviso'),
     h('p', { class: 'legal' }, 'Navegador de uso personal. Los radares son ubicaciones públicas y pueden estar incompletas o desactualizadas: respeta siempre los límites y la señalización. No manipules el móvil mientras conduces. Este proyecto no está afiliado a ningún videojuego ni a sus editores.'),
-    h('dl', { class: 'kv' }, h('dt', null, 'Versión'), h('dd', null, CONFIG.version)),
+    h('dl', { class: 'kv' }, h('dt', null, 'Versión'), h('dd', null, `${CONFIG.version}${NATIVE ? ' · app Android' : ' · web'}`)),
+    st.update ? h('div', { class: 'row', style: { marginTop: '12px' } },
+      h('a', { class: 'btn primary', href: st.update.url, target: '_blank', rel: 'noopener', style: { textDecoration: 'none' } }, `Descargar versión ${st.update.version}`)) : null,
+    h('h3', null, 'Probar con amigos'),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn', onclick: shareApp, html: `${ICONS.share}<span>Compartir la app</span>` }),
+      h('button', { class: 'btn primary', onclick: openFeedback }, 'Enviar opinión')),
     h('div', { class: 'row', style: { marginTop: '12px' } },
       document.fullscreenEnabled ? h('button', { class: 'btn small', onclick: () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {}), html: `${ICONS.fullscreen}<span>Pantalla completa</span>` }) : null),
   ];
@@ -1189,13 +1215,268 @@ function showMission(title, sub) {
 }
 
 async function requestWakeLock() {
-  if (!('wakeLock' in navigator)) return;
   const want = S.keepAwake === 'siempre' || (S.keepAwake === 'navegando' && st.mode === 'nav');
+  if (NATIVE && Native.keepAwake) { nativeKeepAwake(want); return; }
+  if (!('wakeLock' in navigator)) return;
   if (!want) { try { await st.wakeLock?.release(); } catch { /* nada */ } st.wakeLock = null; return; }
   if (st.wakeLock && !st.wakeLock.released) return;
   try { st.wakeLock = await navigator.wakeLock.request('screen'); } catch { /* denegado */ }
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') requestWakeLock(); });
+
+
+// ======================================================================
+// Android Auto y app nativa
+// ======================================================================
+const recentErrors = [];
+addEventListener('error', (e) => { recentErrors.push(String(e.message || e).slice(0, 160)); if (recentErrors.length > 6) recentErrors.shift(); });
+addEventListener('unhandledrejection', (e) => { recentErrors.push(String(e.reason?.message || e.reason).slice(0, 160)); if (recentErrors.length > 6) recentErrors.shift(); });
+
+const CAR = NATIVE && !!Native.car;
+let carLastSent = 0;
+let carIconKey = '';
+
+function carCall(method, args) {
+  if (!CAR) return;
+  try { Native.car[method](args).catch(() => {}); } catch { /* sin puente */ }
+}
+
+function carNavInfo(ns, alert) {
+  const info = { active: st.mode === 'nav' && !!st.route, loading: !!st.rerouting, voice: !!S.voice, street: st.streetFree || '', locality: st.locality || '' };
+  if (alert) info.alert = { id: alert.id, title: alert.label, text: `${alert.label} a ${fmtDist(alert.d)}${alert.limit ? ` · límite ${alert.limit}` : ''}` };
+  if (info.active && ns?.next) {
+    const m = ns.next, a = ns.afterNext;
+    info.cur = { kind: m.kind, exit: m.exit || 0, text: m.text || '', street: (m.street || '').split(' / ')[0] };
+    if (a && ns.distAfter < 500 && m.kind !== 'arrive') info.next = { kind: a.kind, exit: a.exit || 0, text: a.text || '', street: (a.street || '').split(' / ')[0] };
+    info.distNext = ns.distNext;
+    info.remaining = ns.remaining;
+    info.remainingTime = ns.remainingTime;
+  } else if (info.active) {
+    info.loading = true;
+  }
+  return info;
+}
+
+function carLive(fix, ns, rs, pos, rot) {
+  if (!CAR) return;
+  const now = Date.now();
+  if (now - carLastSent < 700) return;
+  carLastSent = now;
+  const tol = 1 + (Number(S.overTolerance) || 0) / 100;
+  const limit = ns?.limit ?? st.limitFree ?? null;
+  const kmh = (fix.speed || 0) * 3.6;
+  const a = rs?.alert;
+  const alert = a ? { id: (a.radar || a.report).id, icon: a.type.icon, label: a.type.label, d: Math.round(a.d), alertDist: a.alertDist, limit: a.kind === 'radar' ? a.limit : null, over: !!a.over, kind: a.kind } : null;
+  const sec = rs?.section;
+  const live = {
+    lat: pos.lat, lon: pos.lon, rot, speed: fix.speed || 0, limit, over: !!(limit && kmh > limit * tol + 2),
+    nav: st.mode === 'nav', segIndex: ns?.segIndex ?? null, snapped: ns?.snapped ?? null, distNext: ns?.distNext ?? null,
+    alert, section: sec ? { avg: sec.avg, limit: sec.limit, remaining: sec.remaining, over: !!sec.over } : null,
+    street: st.streetFree || '', locality: st.locality || '',
+  };
+  carCall('update', { live: JSON.stringify(live), nav: carNavInfo(ns, alert) });
+  if (st.mode === 'nav' && ns?.next) carIcons(ns);
+}
+
+function carLiveNow() {
+  if (!CAR || !st.fix) return;
+  carLastSent = 0;
+  const ns = st.mode === 'nav' ? st.navState : null;
+  const pos = ns && !ns.offRoute && ns.offset < 40 ? ns.snapped : { lat: st.fix.lat, lon: st.fix.lon };
+  carLive(st.fix, ns, watcher.lastState, pos, currentRotation());
+}
+
+async function svgToPng(svg, size = 96) {
+  const src = svg.replace('<svg ', `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" `).replaceAll('currentColor', '#ffffff');
+  const img = new Image();
+  img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(src)}`;
+  await img.decode();
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  c.getContext('2d').drawImage(img, 0, 0, size, size);
+  return c.toDataURL('image/png');
+}
+
+async function carIcons(ns) {
+  const m = ns.next, a = ns.afterNext && ns.distAfter < 500 ? ns.afterNext : null;
+  const key = `${ns.nextIndex}:${m.kind}:${m.exit}|${a ? `${a.kind}:${a.exit}` : ''}`;
+  if (key === carIconKey) return;
+  carIconKey = key;
+  try {
+    const current = await svgToPng(maneuverSVG(m.kind, m.exit));
+    const next = a ? await svgToPng(maneuverSVG(a.kind, a.exit)) : '';
+    carCall('setIcons', { current, next });
+  } catch { /* sin icono: Android Auto usa el suyo */ }
+}
+
+function carRoute() {
+  const r = st.mode === 'nav' ? st.route : null;
+  const json = r ? JSON.stringify({ coords: r.coords, dest: st.dest ? { lat: st.dest.lat, lon: st.dest.lon } : null, stops: st.stops.map((x) => ({ lat: x.lat, lon: x.lon })) }) : 'null';
+  carIconKey = '';
+  carCall('setRoute', { json });
+}
+
+function carRadars(g) { carCall('setRadars', { json: JSON.stringify(g || radarDB.geojson()) }); }
+
+function carSettings() {
+  carCall('setSettings', { json: JSON.stringify({ skin: S.skin, buildings3d: S.buildings3d, poi: S.poi, showRadars: S.showRadars, headingUp: S.headingUp, tilt: S.tilt }) });
+}
+
+function carPlaces() {
+  if (!CAR) return;
+  const out = [];
+  const seen = new Set();
+  const add = (p, name) => {
+    if (!p) return;
+    const k = `${p.lat.toFixed(5)},${p.lon.toFixed(5)}`;
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push({ name: name || p.name, address: name ? p.address || p.name || '' : p.address || '', lat: p.lat, lon: p.lon });
+  };
+  add(store.get('home'), 'Casa');
+  add(store.get('work'), 'Trabajo');
+  favs().forEach((p) => add(p));
+  recents().slice(0, 6).forEach((p) => add(p));
+  carCall('setPlaces', { places: out.slice(0, 16) });
+}
+
+async function navigateNow(dest) {
+  if (!st.fix) { speak('Todavía no tengo tu posición.'); toast('Esperando GPS…'); return; }
+  if (st.mode === 'nav') endNav();
+  closeSheet();
+  st.dest = { name: dest.name, lat: dest.lat, lon: dest.lon, address: dest.address };
+  st.stops = [];
+  addRecent(st.dest);
+  st.rerouting = true;
+  carLiveNow();
+  try {
+    const f = st.fix;
+    const routes = await getRoutes({ points: [{ lat: f.lat, lon: f.lon, heading: (f.speed || 0) > 3 ? f.heading : null }, st.dest], alternatives: false, avoidTolls: S.avoidTolls, avoidHighways: S.avoidHighways });
+    routes.forEach((r) => { r.radarsList = radarsOnRoute(r, radarDB, S.radarTypes); });
+    st.routes = routes; st.selRoute = 0; st.traffic = null;
+    st.rerouting = false;
+    startNav(false);
+  } catch (e) {
+    st.rerouting = false;
+    st.dest = null;
+    speak('No he podido calcular la ruta.');
+    toast(e.final ? e.message : 'No se pudo calcular la ruta');
+    carLiveNow();
+  }
+}
+
+async function navigateNearest(kind) {
+  const near = nearPoint();
+  try {
+    let list = [];
+    if (kind === 'fuel' || kind === 'fuel-cheap') {
+      try {
+        const data = await loadFuel();
+        list = nearestFuel(data, near.lat, near.lon, { fuel: S.fuelType, sort: kind === 'fuel-cheap' ? 'price' : 'dist', radius: kind === 'fuel-cheap' ? 10000 : 8000 });
+        if (kind === 'fuel-cheap') list = list.filter((x) => x.price);
+      } catch {
+        list = await searchCategory(CATEGORIES[0], near.lat, near.lon, 6000);
+      }
+    } else {
+      list = await searchCategory(CATEGORIES.find((c) => c.id === kind) || CATEGORIES[1], near.lat, near.lon, 3000);
+    }
+    const p = list[0];
+    if (!p) { speak('No he encontrado nada cerca.'); return; }
+    const price = p.price ? `, a ${p.price.toFixed(3).replace('.', ' con ')} euros el litro` : '';
+    speak(`Vamos a ${p.name}${price}.`);
+    navigateNow(p);
+  } catch {
+    speak('No he podido buscar ahora mismo.');
+  }
+}
+
+function onCarAction(action, data) {
+  switch (action) {
+    case 'endNav':
+      if (st.mode === 'nav') { endNav(); speak('Navegación terminada.'); }
+      break;
+    case 'toggleVoice':
+      S.voice = !S.voice; saveSettings();
+      if (!S.voice) stopSpeaking(); else speak('Voz activada.');
+      $('#btnMute').innerHTML = S.voice ? ICONS.volume : ICONS.mute;
+      carLiveNow();
+      break;
+    case 'navigate':
+      if (data && isFinite(data.lat)) navigateNow(data);
+      break;
+    case 'nearest':
+      navigateNearest(data?.kind || 'fuel');
+      break;
+    case 'carConnected':
+      toast('Android Auto conectado');
+      carSettings(); carRadars(); carPlaces(); carRoute(); carLiveNow();
+      break;
+    default:
+      break;
+  }
+}
+
+function initNative() {
+  if (!NATIVE) return;
+  document.body.classList.add('native');
+  if (CAR) {
+    Native.car.addListener('carAction', (ev) => onCarAction(ev?.action, ev?.data || {}));
+    carSettings(); carRadars(); carPlaces(); carRoute();
+  }
+  Native.app?.addListener('backButton', () => {
+    const ov = [...document.querySelectorAll('.overlay')].pop();
+    if (ov) { ov.remove(); return; }
+    if (skinPop) { closeSkinPop(); return; }
+    if (st.mode === 'preview') { cancelPreview(); return; }
+    if (st.sheetView) { closeSheet(); st.pin = null; refreshPin(); return; }
+    Native.app.minimizeApp?.();
+  });
+  setTimeout(() => {
+    checkForUpdate().then((u) => {
+      if (!u) return;
+      st.update = u;
+      toast(`Hay una versión nueva (${u.version}). Menú → Info para descargarla.`, 7000);
+    }).catch(() => {});
+  }, 8000);
+}
+
+function feedbackInfo() {
+  const counts = radarDB.all.length;
+  return [
+    `Minimapa ${BUILD.version}${NATIVE ? ' (app Android)' : ' (web)'}`,
+    `Móvil: ${navigator.userAgent.replace(/.*Android/, 'Android').slice(0, 60)}`,
+    `Skin: ${S.skin} · Radares: ${counts} · GPS: ${st.fix ? `±${Math.round(st.fix.acc || 0)} m` : 'sin señal'}`,
+    recentErrors.length ? `Errores: ${recentErrors.join(' | ')}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+function openFeedback() {
+  const ta = h('textarea', { class: 'code', placeholder: '¿Qué tal va? Qué funciona, qué falla, qué echas de menos…', style: { fontFamily: 'inherit', fontSize: '15px' } });
+  const send = (via) => {
+    const text = `${ta.value.trim() || '(sin comentario)'}\n\n— ${feedbackInfo()}`;
+    if (via === 'whatsapp') {
+      const a = h('a', { href: `https://wa.me/?text=${encodeURIComponent(`Opinión sobre Minimapa:\n${text}`)}`, target: '_blank', rel: 'noopener' });
+      document.body.append(a); a.click(); a.remove();
+    } else {
+      shareText('Opinión sobre Minimapa', text).then((ok) => { if (!ok) copyText(text); });
+    }
+  };
+  const ov = h('div', { class: 'overlay' },
+    h('div', { class: 'menu-head' }, h('div', { class: 'panel-title', style: { flex: '1' } }, 'Enviar opinión'), h('button', { class: 'icon-btn', onclick: () => ov.remove(), html: ICONS.close, 'aria-label': 'Cerrar' })),
+    h('p', { class: 'legal' }, 'Se añade la versión, el modelo de móvil y los últimos errores para que sea más fácil arreglar lo que falle.'),
+    ta,
+    h('div', { class: 'row', style: { marginTop: '10px' } },
+      h('button', { class: 'btn primary', onclick: () => send('whatsapp') }, 'WhatsApp'),
+      h('button', { class: 'btn', onclick: () => send('share'), html: `${ICONS.share}<span>Otra app</span>` })));
+  document.body.append(ov);
+  ta.focus();
+}
+
+function shareApp() {
+  const link = apkLink() || location.href;
+  const text = `Prueba Minimapa, el navegador con mapas tipo videojuego y avisos de radares.\n\n1) Descarga e instala: ${link}\n2) Permite instalar apps de origen desconocido si te lo pide.\n3) Para Android Auto: en Android Auto → Ajustes, toca 10 veces "Versión", luego ⋮ → Ajustes de desarrollador → marca "Fuentes desconocidas".`;
+  shareText('Minimapa', text).then((ok) => { if (!ok) copyText(text); });
+}
 
 // ======================================================================
 // Arranque
@@ -1277,13 +1558,14 @@ function start() {
 }
 
 buildUI();
+initNative();
 radarDB.init().catch((e) => console.warn('Radares:', e));
 $('#splash').addEventListener('click', start);
 $('#splash').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') start(); });
 
-if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+if (!NATIVE && 'serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
 // Ganchos para pruebas y depuración desde la consola
-window.__mm = { map, st, S, radarDB, nav, watcher, processFix, previewRoute, startNav, endNav, selectPlace, toast, runCategory, openMenu, setSkin, pointAlong, angDiff };
+window.__mm = { onCarAction, carLive, navigateNow, map, st, S, radarDB, nav, watcher, processFix, previewRoute, startNav, endNav, selectPlace, toast, runCategory, openMenu, setSkin, pointAlong, angDiff };

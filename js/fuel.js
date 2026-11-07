@@ -31,9 +31,13 @@ function fromMinetur(data) {
 export async function loadFuel() {
   if (cache && Date.now() - cache.loadedAt < 3 * 3600e3) return cache;
   let data = null;
-  try {
-    data = await fetchJSON(`${CONFIG.fuelData}?t=${Math.floor(Date.now() / 3600e3)}`, { timeout: 20000 });
-  } catch {
+  for (const url of [].concat(CONFIG.fuelData)) {
+    try {
+      data = await fetchJSON(`${url}?t=${Math.floor(Date.now() / 3600e3)}`, { timeout: 20000 });
+      if (data?.estaciones?.length) break;
+    } catch { data = null; }
+  }
+  if (!data?.estaciones?.length) {
     try { data = fromMinetur(await fetchJSON(CONFIG.minetur, { timeout: 30000, headers: { Accept: 'application/json' } })); } catch { data = null; }
   }
   if (data?.estaciones?.length) {

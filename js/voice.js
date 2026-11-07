@@ -1,5 +1,7 @@
 // Voz (Web Speech API) y sonidos generados con Web Audio.
 
+import { Native, NATIVE } from './native.js';
+
 let audioCtx = null;
 let voices = [];
 const state = { enabled: true, voiceURI: null, volume: 1, rate: 1.05, soundStyle: 'sirena' };
@@ -13,7 +15,7 @@ if (typeof speechSynthesis !== 'undefined') {
 }
 
 export function configureVoice(opts) { Object.assign(state, opts); }
-export function spanishVoices() { loadVoices(); return voices; }
+export function spanishVoices() { if (NATIVE) return []; loadVoices(); return voices; }
 
 /** Debe llamarse desde un toque del usuario para desbloquear audio en iOS/Android. */
 export function unlockAudio() {
@@ -46,6 +48,14 @@ export function speak(text, { priority = 'normal' } = {}) {
   const now = Date.now();
   if (text === lastText && now - lastAt < 4000) return; // evita repeticiones
   lastText = text; lastAt = now;
+  // En la app Android se usa el motor de voz del sistema: suena también con la pantalla apagada y en Android Auto
+  if (NATIVE && Native.tts) {
+    Native.tts.speak({
+      text, lang: 'es-ES', rate: state.rate, pitch: 1.0, volume: Number(state.volume) || 1,
+      category: 'playback', queueStrategy: priority === 'high' ? 0 : 1,
+    }).catch(() => {});
+    return;
+  }
   try {
     if (priority === 'high') speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
@@ -57,7 +67,10 @@ export function speak(text, { priority = 'normal' } = {}) {
   } catch { /* sin voz */ }
 }
 
-export function stopSpeaking() { try { speechSynthesis.cancel(); } catch { /* nada */ } }
+export function stopSpeaking() {
+  if (NATIVE && Native.tts) { Native.tts.stop().catch(() => {}); return; }
+  try { speechSynthesis.cancel(); } catch { /* nada */ }
+}
 
 function tone(freq, start, dur, type = 'sine', vol = 0.25, endFreq) {
   const t0 = audioCtx.currentTime + start;

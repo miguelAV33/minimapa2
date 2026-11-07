@@ -99,14 +99,39 @@ def ahora_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def descargar(url: str, datos: bytes | None = None, timeout: int = 120, intentos: int = 3) -> bytes:
+def _ssl_tolerante():
+    """Contexto TLS para servidores públicos antiguos (p. ej. el del Ministerio), que cierran la
+    conexión sin el aviso que exige OpenSSL 3 o necesitan renegociación heredada."""
+    import ssl  # noqa: PLC0415
+    ctx = ssl.create_default_context()
+    ctx.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0x4)
+    ctx.options |= getattr(ssl, "OP_IGNORE_UNEXPECTED_EOF", 0x80)
+    try:
+        ctx.set_ciphers("DEFAULT:@SECLEVEL=1")
+    except ssl.SSLError:
+        pass
+    return ctx
+
+
+def _curl(url: str, timeout: int) -> bytes:
+    import subprocess  # noqa: PLC0415
+    r = subprocess.run(["curl", "-sS", "-L", "--fail", "--max-time", str(timeout), "-A", UA, "-H", "Accept: application/json", url],
+                       capture_output=True, timeout=timeout + 10, check=False)
+    if r.returncode != 0 or len(r.stdout) < 50:
+        raise RuntimeError(f"curl {r.returncode}: {r.stderr.decode(errors='replace')[:200]}")
+    return r.stdout
+
+
+def descargar(url: str, datos: bytes | None = None, timeout: int = 120, intentos: int = 3, tolerante: bool = False) -> bytes:
     ultimo = None
     for i in range(intentos):
         try:
             req = urllib.request.Request(url, data=datos, headers={"User-Agent": UA, "Accept": "*/*"})
             if datos is not None:
                 req.add_header("Content-Type", "application/x-www-form-urlencoded")
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            if tolerante and i == intentos - 1 and datos is None:
+                return _curl(url, timeout)
+            with urllib.request.urlopen(req, timeout=timeout, context=_ssl_tolerante() if tolerante else None) as r:
                 cuerpo = r.read(80 * 1024 * 1024)
             if len(cuerpo) < 50:
                 raise ValueError("respuesta demasiado corta")
@@ -709,7 +734,7 @@ def escribir_base(estado: dict[str, dict]) -> dict:
 def actualizar_carburantes() -> bool:
     log("→ carburantes: descargando…")
     try:
-        contenido = descargar(CARBURANTES_URL, timeout=180)
+        contenido = descargar(CARBURANTES_URL, timeout=180, tolerante=True)
         datos = convertir_carburantes(contenido.decode("utf-8-sig"))
     except Exception as e:  # noqa: BLE001
         log(f"  ✗ carburantes: {e}")

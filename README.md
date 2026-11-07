@@ -17,26 +17,36 @@ Navegador GPS personal que funciona en el navegador del móvil y se instala como
 - Funciona sin conexión la app y el mapa que ya hayas visto, y mantiene la pantalla encendida.
 - **Tráfico en directo (opcional)** con una clave gratuita de TomTom.
 
-## Publicarlo gratis con GitHub Pages (10 minutos)
+## App Android (APK) y Android Auto
 
-El GPS del navegador solo funciona con HTTPS, así que lo más fácil es GitHub Pages:
+Cada vez que se sube un cambio a `main`, GitHub Actions compila el APK y lo publica en *Releases*. El enlace de descarga es siempre el mismo y sirve para pasárselo a quien quieras:
 
-1. Crea un repositorio **público** en GitHub (por ejemplo `minimapa`). Pages gratis necesita repositorio público.
-2. Sube el contenido de esta carpeta, incluida la carpeta oculta `.github`:
-   ```bash
-   cd minimapa
-   git init && git add . && git commit -m "Minimapa"
-   git branch -M main
-   git remote add origin https://github.com/HookMike/minimapa.git
-   git push -u origin main
-   ```
-3. En el repositorio, ve a **Settings → Pages → Build and deployment → Source** y elige **GitHub Actions**.
-4. Ve a **Actions → "Actualizar datos y publicar" → Run workflow**. Tarda unos minutos, sobre todo la consulta de OpenStreetMap de toda España. A partir de ahí se repite solo cada día y cada vez que subes cambios.
-5. Abre `https://hookmike.github.io/minimapa/` en el móvil:
-   - **Android (Chrome)**: menú ⋮ → *Instalar aplicación*.
-   - **iPhone (Safari)**: botón Compartir → *Añadir a pantalla de inicio*.
+**https://github.com/miguelAV33/minimapa2/releases/latest/download/minimapa.apk**
 
-La primera vez acepta el permiso de ubicación (y el de brújula en iPhone).
+Para instalarla:
+
+1. Abre el enlace en el móvil Android, descarga el APK y ábrelo. Si te lo pide, permite *Instalar apps de origen desconocido*.
+2. Abre Minimapa, pulsa la pantalla de inicio y acepta la ubicación y las notificaciones. La notificación "Minimapa activo" es la que mantiene el GPS y los avisos con la pantalla apagada.
+3. Cuando haya una versión nueva, la app te avisa (Menú → Info → Descargar).
+
+Para que salga en **Android Auto** (al no venir de Play Store hay que activarlo una vez):
+
+1. En el móvil abre la app **Android Auto** → *Ajustes*.
+2. Baja hasta *Versión* y tócala 10 veces. Acepta el aviso de modo desarrollador.
+3. Menú ⋮ (arriba a la derecha) → *Ajustes de desarrollador* → marca **Fuentes desconocidas**.
+4. Abre Minimapa en el móvil una vez y conecta el coche. Minimapa aparece en el lanzador de Android Auto.
+
+En el coche se ve el mapa con tu skin, la tarjeta de maniobra con distancia y hora de llegada, los radares con el parpadeo rojo y azul, el velocímetro con el límite y la velocidad media en los tramos. El botón **Destinos** permite ir a Casa, Trabajo, favoritos, recientes, la gasolinera más barata o el parking más cercano sin tocar el móvil. La voz suena por los altavoces del coche.
+
+Las rutas y los avisos se calculan en la app del móvil, así que tiene que estar abierta (puede quedarse en segundo plano). Si conectas el coche sin abrirla antes, la pantalla del coche te lo recuerda.
+
+**Opiniones de quien la pruebe**: Menú → Info → *Enviar opinión* manda un mensaje por WhatsApp (u otra app) con el comentario, la versión, el modelo de móvil y los últimos errores. *Compartir la app* envía el enlace de descarga con las instrucciones.
+
+**CarPlay**: no es posible sin un Mac, una cuenta de desarrollador de Apple de pago y que Apple conceda a mano el permiso de navegación CarPlay. En iPhone se puede usar la versión web.
+
+## Versión web (GitHub Pages)
+
+La misma app funciona en el navegador en **https://miguelav33.github.io/minimapa2/** (en iPhone: Safari → Compartir → *Añadir a pantalla de inicio*). Para que se publique, en el repositorio: **Settings → Pages → Source: GitHub Actions**. El flujo *Actualizar datos y publicar* descarga los radares y los precios cada día y publica la web; el APK descarga de ahí los datos nuevos.
 
 ## Uso rápido
 
@@ -56,7 +66,7 @@ La primera vez acepta el permiso de ubicación (y el de brújula en iPhone).
 | DGT · Punto de Acceso Nacional (XML DATEX II) | Radares fijos y tramos con coordenadas oficiales | Datos abiertos DGT |
 | OpenStreetMap (Overpass) | `highway=speed_camera` y relaciones `type=enforcement` | ODbL 1.0 |
 
-El script `scripts/actualizar_datos.py` las descarga, las convierte y las fusiona por prioridad. Si dos fuentes marcan el mismo radar, se queda uno y se completan el sentido y el límite que le falten. Si una fuente falla o llega con muchos menos radares de lo normal, se conserva su última copia buena (`data/fuentes/`). El paquete incluye una base inicial de 1.298 radares para que funcione desde el primer minuto.
+El script `scripts/actualizar_datos.py` las descarga, las convierte y las fusiona por prioridad. Si dos fuentes marcan el mismo radar, se queda uno y se completan el sentido y el límite que le falten. Si una fuente falla o llega con muchos menos radares de lo normal, se conserva su última copia buena (`data/fuentes/`). La app trae dentro la última base (unos 3.000 radares) para funcionar desde el primer minuto, también sin conexión.
 
 **Cobertura**: la DGT no publica Cataluña ni País Vasco; Cataluña la cubre el SCT y el País Vasco depende de OpenStreetMap. Ninguna base es perfecta, así que respeta siempre la señalización.
 
@@ -67,6 +77,16 @@ cd minimapa
 python -m http.server 8000      # o copia la carpeta a htdocs de XAMPP
 # abre http://localhost:8000 (en localhost el navegador sí permite la ubicación)
 ```
+
+Compilar el APK en tu PC (necesitas Android Studio o el SDK de Android y Java 21):
+
+```bash
+npm install
+npm run android          # prepara www/ y sincroniza el proyecto Android
+cd android && ./gradlew assembleRelease
+```
+
+Para probar Android Auto sin coche: instala el *Desktop Head Unit* (DHU) desde el SDK Manager de Android Studio.
 
 Pruebas automáticas:
 
@@ -81,12 +101,13 @@ python scripts/actualizar_datos.py        # actualizar los datos a mano
 - **Skins**: `js/skins.js`. Cada skin es un objeto de colores (fondo, agua, parques, cada tipo de vía, ruta, iconos…). Copia una, cambia los colores y aparecerá en el menú.
 - **Iconos del mapa**: `js/blips.js` (se dibujan con canvas).
 - **Servicios** (mapa, rutas, búsqueda): `js/config.js`.
+- **Android Auto**: `android/app/src/main/java/io/github/miguelav33/minimapa/car/` (plantillas del coche y puente con la app) y `js/car.js` (mapa del coche).
 - **Distancias de aviso y voz**: `js/nav.js` y `js/radars.js`.
 
 ## Limitaciones (para que no haya sorpresas)
 
-- Es una app web: si apagas la pantalla o cambias de app, el navegador pausa el GPS. Por eso mantiene la pantalla encendida mientras está abierta.
-- No funciona dentro de Android Auto ni de CarPlay.
+- En la **versión web**, si apagas la pantalla el navegador pausa el GPS; la **app Android** sigue funcionando en segundo plano gracias a su notificación.
+- Android Auto funciona como app instalada fuera de Play Store (con "Fuentes desconocidas" activado). Google podría cambiar ese requisito en el futuro.
 - Rutas, búsqueda y mapa usan servidores públicos y gratuitos de la comunidad OpenStreetMap (FOSSGIS Valhalla, Photon, OpenFreeMap, Overpass). Para uso personal van sobrados; si alguno cae, la app usa el de respaldo (OSRM, Nominatim).
 - Sin clave de TomTom no hay tráfico en directo: la hora de llegada se calcula sin atascos.
 - Las voces dependen del móvil. En Android viene la de Google en español; en iPhone, Mónica o Jorge.

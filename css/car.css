@@ -1,0 +1,65 @@
+/* Pantalla del coche (Android Auto). Las posiciones se ajustan al área visible que deja la interfaz del coche. */
+@font-face { font-family: 'Oswald'; font-weight: 500; src: url(../fonts/oswald-latin-500-normal.woff2) format('woff2'); }
+@font-face { font-family: 'Oswald'; font-weight: 700; src: url(../fonts/oswald-latin-700-normal.woff2) format('woff2'); }
+@font-face { font-family: 'Bebas'; font-weight: 400; src: url(../fonts/bebas-neue-latin-400-normal.woff2) format('woff2'); }
+
+:root {
+  --accent: #b45cff;
+  --vl: 0px; --vt: 0px; --vr: 0px; --vb: 0px; /* márgenes hasta el área visible */
+  --u: min(1vh, 1vw);
+  --ui: 'Oswald', 'Arial Narrow', sans-serif;
+  --big: 'Bebas', 'Oswald', Impact, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d0c; color: #f2f4f3; font-family: var(--ui); }
+[hidden] { display: none !important; }
+#map { position: fixed; inset: 0; }
+.maplibregl-ctrl-attrib { font-size: 9px; opacity: .6; }
+
+#speedo { position: fixed; left: calc(var(--vl) + 2.5vh); bottom: calc(var(--vb) + 2.5vh); width: 17vh; height: 17vh; border-radius: 50%; background: rgba(9, 11, 10, .88); border: .8vh solid rgba(255,255,255,.2); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 5; }
+#speedVal { font-family: var(--big); font-size: 8vh; line-height: .9; }
+#speedUnit { font-size: 1.9vh; letter-spacing: .14em; color: #9aa5a0; text-transform: uppercase; }
+#speedo.over { border-color: #ff3b3b; background: rgba(120, 0, 0, .9); }
+#limitSign { position: absolute; right: -3.5vh; top: -2.5vh; width: 9vh; height: 9vh; border-radius: 50%; background: #fff; border: 1vh solid #d32f2f; display: grid; place-items: center; color: #111; font-weight: 700; font-size: 3.6vh; }
+
+#alertCard { position: fixed; right: calc(var(--vr) + 2vh); top: calc(var(--vt) + 2vh); width: 34vh; background: #0c0f0d; border: .5vh solid #ff3b3b; padding: 1.4vh; display: flex; flex-direction: column; gap: .8vh; z-index: 6; }
+#alertCard .a-top { display: flex; align-items: center; gap: 1.2vh; }
+#alertCard img { width: 7vh; height: 7vh; }
+#alertCard .a-type { font-weight: 700; font-size: 2.6vh; text-transform: uppercase; letter-spacing: .06em; line-height: 1.1; }
+#alertCard .a-row { display: flex; align-items: center; justify-content: space-between; }
+#alertCard .a-dist { font-family: var(--big); font-size: 8vh; line-height: 1; }
+#alertCard .a-lim { width: 9vh; height: 9vh; border-radius: 50%; background: #fff; border: 1vh solid #d32f2f; display: grid; place-items: center; color: #111; font-weight: 700; font-size: 3.6vh; }
+#alertCard .a-bar { height: 1vh; background: rgba(255,255,255,.12); }
+#alertCard .a-bar i { display: block; height: 100%; background: #ff3b3b; transition: width .9s linear; }
+#alertCard.over { background: #7a0000; }
+#alertCard.report { border-color: #f6c945; }
+#alertCard.report .a-bar i { background: #f6c945; }
+
+#sectionCard { position: fixed; right: calc(var(--vr) + 2vh); top: calc(var(--vt) + 2vh); background: #0c0f0d; border: .5vh solid #ff6d00; padding: 1.2vh 1.6vh; z-index: 5; min-width: 30vh; }
+#alertCard:not([hidden]) ~ #sectionCard { top: calc(var(--vt) + 34vh); }
+#sectionCard .s-t { font-size: 2vh; text-transform: uppercase; letter-spacing: .1em; color: #ffb36b; }
+#sectionCard .s-avg { font-family: var(--big); font-size: 7vh; line-height: 1; }
+#sectionCard .s-avg small { font-family: var(--ui); font-size: 2.2vh; color: #9aa5a0; }
+#sectionCard .s-sub { font-size: 2.2vh; color: #9aa5a0; }
+#sectionCard.over { background: #7a0000; border-color: #ff3b3b; }
+
+#street { position: fixed; left: calc(var(--vl) + 23vh); bottom: calc(var(--vb) + 2.5vh); max-width: 50vw; background: rgba(9, 11, 10, .88); padding: .8vh 1.6vh; font-size: 2.6vh; letter-spacing: .04em; border-bottom: .5vh solid var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; z-index: 5; }
+#street small { display: block; color: #9aa5a0; font-size: 1.7vh; text-transform: uppercase; letter-spacing: .14em; }
+
+#flash { position: fixed; inset: 0; pointer-events: none; z-index: 4; opacity: 0; }
+#flash.on { opacity: 1; animation: police .9s steps(1) infinite; }
+@keyframes police {
+  0% { box-shadow: inset 0 0 0 1.4vh rgba(255, 40, 40, .9), inset 0 0 8vh 3vh rgba(255, 40, 40, .35); }
+  50% { box-shadow: inset 0 0 0 1.4vh rgba(40, 110, 255, .9), inset 0 0 8vh 3vh rgba(40, 110, 255, .35); }
+}
+
+.player { width: 9vh; height: 9vh; pointer-events: none; }
+.player svg { position: absolute; inset: 0; width: 100%; height: 100%; filter: drop-shadow(0 .3vh .4vh rgba(0,0,0,.6)); }
+
+#wait { position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 6vh;
+  background: repeating-linear-gradient(115deg, transparent 0 46px, rgba(255,255,255,.035) 46px 48px), #0b0d0c; }
+#wait.gone { display: none; }
+.w-title { font-family: var(--big); font-size: 16vh; line-height: .9; transform: skewX(-6deg); text-shadow: .6vh .6vh 0 var(--accent); }
+.w-title span { color: var(--accent); text-shadow: none; }
+.w-sub { margin-top: 3vh; font-weight: 700; font-size: 4.4vh; text-transform: uppercase; letter-spacing: .1em; }
+.w-note { margin-top: 1.5vh; font-size: 2.6vh; color: #9aa5a0; max-width: 70vw; }

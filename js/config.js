@@ -1,7 +1,11 @@
 // Configuración de servicios. Todo lo que hay aquí es gratuito y sin registro.
+import { BUILD } from './build-info.js';
+
+// En el APK los datos actualizados se descargan de GitHub Pages; si no hay conexión, se usan los incluidos.
+const remote = (path) => (BUILD.remoteBase ? [BUILD.remoteBase + path, path] : [path]);
 // Para pruebas se puede sobrescribir con window.__MINIMAPA_OVERRIDES antes de cargar la app.
 export const CONFIG = Object.assign({
-  version: '1.0.0',
+  version: BUILD.version,
   // Mapa vectorial (OpenStreetMap vía OpenFreeMap)
   tilesUrl: 'https://tiles.openfreemap.org/planet',
   glyphsUrl: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
@@ -25,8 +29,8 @@ export const CONFIG = Object.assign({
   // Precios de carburantes (Ministerio para la Transición Ecológica)
   minetur: 'https://sedeaplicaciones.minetur.gob.es/ServiciosRESTCarburantes/PreciosCarburantes/EstacionesTerrestres/',
   // Datos generados cada día por GitHub Actions (mismo sitio, sin CORS)
-  radarData: 'data/radares.json',
-  fuelData: 'data/gasolineras.json',
+  radarData: remote('data/radares.json'),
+  fuelData: remote('data/gasolineras.json'),
   radarRefreshHours: 6,
   // Vista inicial si aún no hay GPS (Madrid)
   startCenter: [-3.7038, 40.4168],

@@ -122,7 +122,16 @@ export class RadarDB {
   async refresh(force) {
     const last = store.get('radarCheckedAt', 0);
     if (!force && this.meta && Date.now() - last < CONFIG.radarRefreshHours * H) return { changed: false };
-    const data = await fetchJSON(`${CONFIG.radarData}?t=${Date.now()}`, { timeout: 20000, cache: 'no-store' });
+    let data = null, lastErr;
+    for (const url of [].concat(CONFIG.radarData)) {
+      try {
+        data = await fetchJSON(`${url}?t=${Date.now()}`, { timeout: 20000, cache: 'no-store' });
+        // La copia incluida en la app solo vale si no tenemos nada mejor
+        if (this.meta && !/^https?:/.test(url) && data.generado <= this.meta.generado) return { changed: false };
+        break;
+      } catch (e) { lastErr = e; data = null; }
+    }
+    if (!data) throw lastErr || new Error('Sin datos de radares');
     store.set('radarCheckedAt', Date.now());
     if (!Array.isArray(data.radares) || data.radares.length < 1) throw new Error('Base de radares no válida');
     const changed = !this.meta || data.generado !== this.meta.generado || data.radares.length !== this.meta.total;

@@ -17,7 +17,7 @@ mkdirSync(out, { recursive: true });
 const items = ['index.html', 'car.html', 'manifest.webmanifest', 'css', 'js', 'vendor', 'fonts', 'icons'];
 for (const it of items) cpSync(join(root, it), join(out, it), { recursive: true });
 mkdirSync(join(out, 'data'), { recursive: true });
-for (const f of ['radares.json', 'gasolineras.json']) {
+for (const f of ['radares.json', 'gasolineras.json', 'zbe.json']) {
   const p = join(root, 'data', f);
   if (existsSync(p)) cpSync(p, join(out, 'data', f));
 }

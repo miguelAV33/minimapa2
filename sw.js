@@ -1,4 +1,5 @@
 // Service worker: la app funciona sin conexión y guarda en caché el mapa que ya has visto.
+// 1.4: incidencias de la DGT, zonas de bajas emisiones, carriles, túneles, búsqueda en la ruta y aparcamiento
 const VERSION = 'minimapa-1.4.0';
 const SHELL_CACHE = `${VERSION}-app`;
 const TILE_CACHE = 'minimapa-tiles';

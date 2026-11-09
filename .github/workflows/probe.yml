@@ -12,11 +12,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Generar zbe.json completo
+      - name: Probar exclude_polygons
         run: |
-          mkdir -p data out
-          python scripts/actualizar_datos.py --solo zbe 2>&1 | tee out/zbe_log.txt
-          cp data/zbe.json out/ || true
+          mkdir -p out
+          python probe_excl.py 2>&1 | tee out/excl.txt
       - name: Publicar muestras en una rama temporal
         run: |
           cd out

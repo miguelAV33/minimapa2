@@ -1,0 +1,39 @@
+name: Sondeo de datos
+on:
+  push:
+    branches: [probe]
+jobs:
+  sondeo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar muestras
+        run: |
+          mkdir -p out && cd out
+          UA="Minimapa/1.4 (+https://github.com/miguelAV33/minimapa2)"
+          echo "== DGT incidencias v3.7" >> info.txt
+          curl -sS -L -A "$UA" -D h_inc.txt -o inc.xml --compressed -w "code=%{http_code} size=%{size_download}\n" https://nap.dgt.es/datex2/v3/dgt/SituationPublication/datex2_v37.xml >> info.txt || true
+          echo "== gzip transfer size" >> info.txt
+          curl -sS -L -A "$UA" -H "Accept-Encoding: gzip" -o /dev/null -w "gz_size=%{size_download}\n" https://nap.dgt.es/datex2/v3/dgt/SituationPublication/datex2_v37.xml >> info.txt || true
+          echo "== CORS" >> info.txt
+          curl -sS -I -A "$UA" -H "Origin: https://localhost" https://nap.dgt.es/datex2/v3/dgt/SituationPublication/datex2_v37.xml >> info.txt || true
+          echo "== ZBE listado" >> info.txt
+          curl -sS -L -A "$UA" -o zbe_index.html -w "code=%{http_code} size=%{size_download}\n" https://nap.dgt.es/datex2/v3/dgt/zbe/ControledZonePublication/ >> info.txt || true
+          for c in Madrid MadridCentral Fuenlabrada Barcelona Valladolid; do
+            curl -sS -L -A "$UA" -o "zbe_$c.xml" -w "$c code=%{http_code} size=%{size_download}\n" "https://nap.dgt.es/datex2/v3/dgt/zbe/ControledZonePublication/$c.xml" >> info.txt || true
+          done
+          echo "== Valhalla carriles" >> info.txt
+          curl -sS -A "$UA" -H "Content-Type: application/json" -o valhalla.json -w "code=%{http_code}\n" \
+            -d '{"locations":[{"lat":40.4168,"lon":-3.7038},{"lat":40.2366,"lon":-3.7676}],"costing":"auto","language":"es-ES","turn_lanes":true,"directions_options":{"language":"es-ES"}}' \
+            https://valhalla1.openstreetmap.de/route >> info.txt || true
+          curl -sS -A "$UA" -H "Content-Type: application/json" -o valhalla_excl.json -w "excl code=%{http_code}\n" \
+            -d '{"locations":[{"lat":40.4168,"lon":-3.7038},{"lat":40.45,"lon":-3.69}],"costing":"auto","exclude_polygons":[[[-3.71,40.42],[-3.69,40.42],[-3.69,40.43],[-3.71,40.43],[-3.71,40.42]]]}' \
+            https://valhalla1.openstreetmap.de/route >> info.txt || true
+          curl -sS -A "$UA" -o osrm.json -w "osrm code=%{http_code}\n" "https://router.project-osrm.org/route/v1/driving/-3.7038,40.4168;-3.7676,40.2366?steps=true&overview=false" >> info.txt || true
+          ls -la >> info.txt
+          gzip -k inc.xml || true
+          cat info.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: muestras
+          path: out/
+          retention-days: 3

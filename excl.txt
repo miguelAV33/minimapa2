@@ -1,0 +1,10 @@
+Parla->Alcobendas sin etiqueta (ZBE Madrid) iter 0: 42.3 km 42 min, entra en ZBE: sí a 15.6 km
+Parla->Alcobendas sin etiqueta (ZBE Madrid) iter 1: 42.3 km 42 min, entra en ZBE: sí a 15.8 km
+Parla->Alcobendas sin etiqueta (ZBE Madrid) iter 2: 44.2 km 43 min, entra en ZBE: sí a 17.6 km
+Parla->Alcobendas sin etiqueta (ZBE Madrid) iter 3: 49.4 km 46 min, entra en ZBE: sí a 18.2 km
+Parla->Alcobendas sin etiqueta (ZBE Madrid) iter 4: 43.1 km 44 min, entra en ZBE: sí a 15.1 km
+Parla->Alcobendas sin etiqueta (ZBE Madrid) iter 5: 45.5 km 46 min, entra en ZBE: sí a 18.4 km
+Parla->Alcobendas sin etiqueta (ZBE Madrid) no se pudo rodear
+Parla->Getafe norte sin etiqueta iter 0: 15.1 km 19 min, entra en ZBE: no
+Atocha->Moncloa con etiqueta C (Distrito Centro) iter 0: 10.0 km 15 min, entra en ZBE: no
+Fuenlabrada: Parla->Mostoles iter 0: 17.9 km 26 min, entra en ZBE: no

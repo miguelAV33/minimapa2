@@ -728,11 +728,14 @@ async function routesAvoidingZbe(points, alternatives, maxTries = 6) {
   const avoid = zbeToAvoid(points).filter((z) => !(z.bbox[0] > e || z.bbox[2] < w || z.bbox[1] > n || z.bbox[3] < s));
   if (!avoid.length) return getRoutes(opts);
   const polys = [];
-  let used = 0;
+  let used = 0, huge = false;
   for (const z of avoid) {
     const per = z.parts.reduce((sum, p) => sum + ringLength(p), 0);
     if (used + per <= EXCLUDE_MAX * 0.6) { polys.push(...z.parts); used += per; }
+    else if (dist(z.bbox[1], z.bbox[0], z.bbox[3], z.bbox[2]) > 8000) huge = true;
   }
+  // Una zona del tamaño de una ciudad entera tiene demasiadas entradas: se intenta poco para no hacer esperar
+  if (huge) maxTries = Math.min(maxTries, 3);
   let last = null;
   for (let i = 0; i < maxTries; i++) {
     let routes;

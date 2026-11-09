@@ -1,17 +1,18 @@
 // Minimapa · aplicación principal
 import * as maplibregl from '../vendor/maplibre-gl.mjs';
 import { CONFIG } from './config.js';
-import { $, $$, h, dist, bearing, angDiff, fmtDist, fmtDur, fmtClock, debounce, store, escapeHtml, bboxOf, pointAlong } from './util.js';
+import { $, $$, h, dist, bearing, angDiff, fmtDist, fmtDur, fmtClock, debounce, store, escapeHtml, bboxOf, pointAlong, projectToSegment } from './util.js';
 import { SKINS, buildStyle, LABEL_ANCHOR, BUILTIN_SKINS, EDIT_COLORS, EDIT_OPTIONS, editableFrom, registerSkin, unregisterSkin, cleanSkinDef, skinFx, playerColors } from './skins.js';
 import { attachImages, alertIconURL, blipIconURL } from './blips.js';
-import { ICONS, maneuverSVG } from './icons.js';
+import { ICONS, maneuverSVG, laneSVG } from './icons.js';
 import { speak, sound, unlockAudio, configureVoice, spanishVoices, stopSpeaking } from './voice.js';
 import { getRoutes, fetchRouteLimits, matchPosition, tomtomTraffic } from './routing.js';
 import { NavEngine, RouteSimulator } from './nav.js';
 import { RadarDB, RadarWatcher, RADAR_TYPES, REPORT_TYPES, radarsOnRoute } from './radars.js';
-import { searchPlaces, reverse, searchCategory, CATEGORIES } from './search.js';
+import { searchPlaces, reverse, searchCategory, CATEGORIES, placeDetails, openState, hoursText } from './search.js';
 import { loadFuel, nearestFuel, FUELS, fmtPrice } from './fuel.js';
 import { isNight } from './sun.js';
+import { IncidentDB, ZbeDB, TrafficWatcher, INCIDENT_TYPES, STICKERS, stickerName, zbeRuleText, zoneTitle } from './traffic.js';
 import { NATIVE, Native, BUILD, startNativeGps, openNativeSettings, nativeKeepAwake, shareText, checkForUpdate, apkLink } from './native.js';
 
 // ======================================================================
@@ -27,6 +28,7 @@ const DEFAULTS = {
   osmLive: true, freeDriveLimits: true,
   tomtomKey: '', traffic: false, fuelType: 'g95',
   autoSkin: false, daySkin: 'atlas', nightSkin: 'radar', vibrate: true, autoRecenter: true,
+  showIncidents: true, incidentAlerts: true, showZbe: true, zbeAlerts: true, sticker: null, avoidZbe: true,
 };
 const S = { ...DEFAULTS, ...store.get('settings', {}) };
 S.radarTypes = { ...DEFAULTS.radarTypes, ...(S.radarTypes || {}) };
@@ -108,6 +110,8 @@ map.on('style.load', () => setTimeout(foldAttribution, 50));
 map.on('rotate', () => { const svg = $('#btnCompass svg'); if (svg) svg.style.transform = `rotate(${-map.getBearing()}deg)`; });
 
 const radarDB = new RadarDB();
+const incDB = new IncidentDB();
+const zbeDB = new ZbeDB();
 const EMPTY = { type: 'FeatureCollection', features: [] };
 
 function setData(id, data) { map.getSource(id)?.setData(data); }
@@ -128,6 +132,8 @@ function addOverlays() {
   src('results', resultsGeo());
   src('favs', favsGeo());
   src('pin', pinGeo());
+  src('incidents', incDB.geojson(S.showIncidents));
+  src('zbe', zbeDB.geojson(S.showZbe, S.sticker));
   const lineLayout = { 'line-join': 'round', 'line-cap': 'round' };
   const wz = (a, b) => ['interpolate', ['linear'], ['zoom'], 8, a, 17, b];
 
@@ -139,6 +145,9 @@ function addOverlays() {
     });
     map.addLayer({ id: 'traffic', type: 'raster', source: 'traffic', paint: { 'raster-opacity': 0.8 } }, before);
   }
+  // Zonas de bajas emisiones: borde discontinuo (rojo si tu coche no puede entrar)
+  map.addLayer({ id: 'zbe-fill', type: 'fill', source: 'zbe', minzoom: 9, paint: { 'fill-color': ['case', ['==', ['get', 'deny'], 1], '#e53935', '#43a047'], 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 9, 0.1, 14, 0.04] } }, before);
+  map.addLayer({ id: 'zbe-line', type: 'line', source: 'zbe', minzoom: 9, paint: { 'line-color': ['case', ['==', ['get', 'deny'], 1], '#e53935', '#43a047'], 'line-width': ['interpolate', ['linear'], ['zoom'], 9, 1.2, 15, 2.6], 'line-dasharray': [3, 2], 'line-opacity': 0.8 } }, before);
   map.addLayer({ id: 'route-alt', type: 'line', source: 'route', filter: ['==', ['get', 'kind'], 'alt'], layout: lineLayout, paint: { 'line-color': sk.routeAlt, 'line-width': wz(4, 9), 'line-opacity': 0.9 } }, before);
   map.addLayer({ id: 'route-done', type: 'line', source: 'route', filter: ['==', ['get', 'kind'], 'done'], layout: lineLayout, paint: { 'line-color': sk.routeDone, 'line-width': wz(3, 7), 'line-opacity': 0.8 } }, before);
   map.addLayer({ id: 'route-glow', type: 'line', source: 'route', filter: ['==', ['get', 'kind'], 'main'], layout: lineLayout, paint: { 'line-color': sk.route, 'line-width': wz(12, 26), 'line-blur': 10, 'line-opacity': 0.45 } }, before);
@@ -167,6 +176,13 @@ function addOverlays() {
       'text-offset': [0, 1.45], 'text-anchor': 'top', 'text-optional': true,
     },
     paint: { 'text-color': '#ffffff', 'text-halo-color': '#c62828', 'text-halo-width': 2.2 },
+  });
+  map.addLayer({
+    id: 'incidents', type: 'symbol', source: 'incidents', minzoom: 7,
+    layout: {
+      'icon-image': ['get', 'icon'], 'icon-size': ['interpolate', ['linear'], ['zoom'], 7, 0.55, 13, 0.85, 17, 1],
+      'icon-allow-overlap': ['step', ['zoom'], false, 13, true], 'symbol-sort-key': ['-', 10, ['get', 'prio']],
+    },
   });
   map.addLayer({
     id: 'results', type: 'symbol', source: 'results',
@@ -220,6 +236,7 @@ function favsGeo() {
   if (home) features.push({ type: 'Feature', properties: { kind: 'home', name: 'Casa' }, geometry: { type: 'Point', coordinates: [home.lon, home.lat] } });
   if (work) features.push({ type: 'Feature', properties: { kind: 'work', name: 'Trabajo' }, geometry: { type: 'Point', coordinates: [work.lon, work.lat] } });
   for (const f of favs()) features.push({ type: 'Feature', properties: { kind: 'fav', name: f.name, id: f.id }, geometry: { type: 'Point', coordinates: [f.lon, f.lat] } });
+  parkingGeo(features);
   return { type: 'FeatureCollection', features };
 }
 function pinGeo() {
@@ -230,6 +247,14 @@ const refreshResults = () => setData('results', resultsGeo());
 const refreshFavs = () => { setData('favs', favsGeo()); carPlaces(); };
 const refreshPin = () => setData('pin', pinGeo());
 radarDB.onChange(() => { const g = radarDB.geojson(); setData('radars', g); carRadars(g); });
+incDB.onChange(() => {
+  setData('incidents', incDB.geojson(S.showIncidents));
+  trafficWatcher.refresh();
+  carRadars();
+  if (st.mode === 'preview' && st.routes.length) { annotateRoutes(st.routes); renderPreview(); }
+});
+zbeDB.onChange(() => { setData('zbe', zbeDB.geojson(S.showZbe, S.sticker)); trafficWatcher.refresh(); });
+const refreshZbe = () => setData('zbe', zbeDB.geojson(S.showZbe, S.sticker));
 
 // ======================================================================
 // Marcador del jugador
@@ -350,8 +375,9 @@ function startCompass() {
 }
 
 function processFix(fix) {
+  if (!fix.dr) st.dr = null; // vuelve la señal real
   const prev = st.lastRawFix;
-  if (prev && fix.t > prev.t) {
+  if (!fix.dr && prev && fix.t > prev.t) {
     const d = dist(prev.lat, prev.lon, fix.lat, fix.lon);
     const dt = (fix.t - prev.t) / 1000;
     if ((fix.speed == null || isNaN(fix.speed)) && dt > 0) fix.speed = d / dt;
@@ -359,14 +385,19 @@ function processFix(fix) {
   }
   if (fix.speed != null && fix.speed < 1.2) fix.heading = st.heading ?? fix.heading;
   if (fix.heading == null || isNaN(fix.heading)) fix.heading = st.heading;
-  st.lastRawFix = fix;
+  if (!fix.dr) {
+    st.lastRawFix = fix;
+    st.lastFixAt = Date.now();
+    if ((fix.speed || 0) > 3) st.lastSpeed = fix.speed;
+  }
   st.fix = fix;
-  st.lastFixAt = Date.now();
   if (fix.heading != null && (fix.speed || 0) > 1.2) st.heading = fix.heading;
   const last = st.trail[st.trail.length - 1];
   if (!last || dist(last.lat, last.lon, fix.lat, fix.lon) > 15) { st.trail.push(fix); if (st.trail.length > 12) st.trail.shift(); }
-  $('#gpsStatus').hidden = true;
-  playerEl.classList.remove('stale');
+  $('#gpsStatus').hidden = !fix.dr;
+  $('#gpsStatus').classList.toggle('dr', !!fix.dr);
+  if (fix.dr) $('#gpsStatus').textContent = 'TÚNEL · POSICIÓN ESTIMADA';
+  playerEl.classList.toggle('stale', !!fix.dr);
 
   let ns = null;
   let pos = { lat: fix.lat, lon: fix.lon };
@@ -379,8 +410,11 @@ function processFix(fix) {
   }
   const rot = currentRotation();
   const watchFix = { ...fix, heading: ns && !ns.offRoute && (fix.speed || 0) > 1.5 ? ns.segBearing : fix.heading };
-  const rs = watcher.update(watchFix, ns);
-  updateAlertUI(rs);
+  const walking = st.travelMode === 'pie';
+  const rs = walking ? null : watcher.update(watchFix, ns);
+  const ts = walking ? null : trafficWatcher.update(watchFix, ns);
+  st.trafficState = ts;
+  updateAlertUI(rs, ts);
   updateSpeedo(fix, ns);
   movePlayer(pos, rot);
   if (!st.everFixed) {
@@ -398,11 +432,25 @@ function processFix(fix) {
   checkAutoSkin(fix);
   updateStreetPill();
   freeDriveExtras(fix, ns);
-  carLive(fix, ns, rs, pos, rot);
+  carLive(fix, ns, mergeAlerts(rs, ts), pos, rot);
+}
+
+/** Un solo aviso en pantalla: radares primero, después ZBE prohibida, incidencias y el resto. */
+function mergeAlerts(rs, ts) {
+  if (!ts) return rs;
+  let a = rs?.alert || null;
+  if (!a) {
+    const z = ts.zbe, i = ts.alert;
+    if (z && z.ok === false) a = z;
+    else if (i) a = i;
+    else if (z) a = z;
+  }
+  return { ...(rs || {}), alert: a };
 }
 
 function freeDriveExtras(fix, ns) {
   const now = Date.now();
+  if (fix.dr) return;
   if (S.freeDriveLimits && !fix.sim && (!ns || ns.limit == null) && (fix.speed || 0) > 2.5 && now - st.lastMatchAt > 12000 && st.trail.length >= 3) {
     st.lastMatchAt = now;
     matchPosition(st.trail.slice(-6)).then((r) => {
@@ -424,11 +472,34 @@ function freeDriveExtras(fix, ns) {
 
 // Vigilancia de señal GPS
 setInterval(() => {
-  if (!st.fix || st.sim) return;
+  if (!st.fix || st.sim || st.dr) return;
   const stale = Date.now() - st.lastFixAt > 12000;
   playerEl.classList.toggle('stale', stale);
+  $('#gpsStatus').textContent = 'SIN GPS';
+  $('#gpsStatus').classList.remove('dr');
   $('#gpsStatus').hidden = !(stale && st.mode === 'nav');
 }, 2000);
+
+// Túneles: sin señal y navegando, la posición sigue avanzando por la ruta a la última velocidad conocida
+// (así los avisos de radar y las indicaciones siguen llegando a tiempo dentro del túnel)
+setInterval(() => {
+  if (st.mode !== 'nav' || !st.route || st.sim || !st.navState || st.travelMode === 'pie') return;
+  const age = Date.now() - (st.lastFixAt || 0);
+  if (age < 2500) return;
+  const ns = st.navState;
+  if (!st.dr) {
+    if (ns.offRoute || ns.offset > 40 || (st.lastSpeed || 0) < 4 || !st.lastRawFix || (st.lastRawFix.speed || 0) < 3) return;
+    st.dr = { along0: ns.along, t0: st.lastFixAt, v: Math.min(st.lastSpeed, 36) };
+  }
+  const travelled = (st.dr.v * (Date.now() - st.dr.t0)) / 1000;
+  // Como mucho 5 km o 3 minutos: después es mejor admitir que no sabemos dónde estamos
+  if (travelled > 5000 || Date.now() - st.dr.t0 > 180000) return;
+  const along = Math.min(st.dr.along0 + travelled, st.route.length - 5);
+  const p = pointAlong(st.route.coords, st.route.cum, along);
+  const c = st.route.coords;
+  const hdg = bearing(c[p.i][1], c[p.i][0], c[p.i + 1][1], c[p.i + 1][0]);
+  processFix({ lat: p.lat, lon: p.lon, speed: st.dr.v, heading: hdg, acc: 25, t: Date.now(), dr: true });
+}, 1000);
 
 // ======================================================================
 // Navegación
@@ -456,6 +527,19 @@ const watcher = new RadarWatcher(radarDB, () => S, {
   },
 });
 
+const trafficWatcher = new TrafficWatcher(incDB, zbeDB, () => S, {
+  speak: (t, o) => speak(t, o),
+  sound: (k) => { sound(k); if (S.vibrate && navigator.vibrate && k === 'radar') navigator.vibrate([120, 80, 120]); },
+});
+
+/** Datos extra de cada ruta: incidencias de la DGT y zonas de bajas emisiones que atraviesa. */
+function annotateRoutes(routes) {
+  for (const r of routes) {
+    r.incidents = incDB.onRoute(r);
+    r.zbe = zbeDB.onRoute(r);
+  }
+}
+
 async function previewRoute(dest) {
   closeSkinPop();
   st.dest = dest;
@@ -470,9 +554,12 @@ async function previewRoute(dest) {
   st.origin = origin;
   openSheet(h('div', null, h('h2', null, 'Calculando ruta…'), h('div', { class: 'spinner' })), 'loading');
   try {
-    const routes = await getRoutes({ points: [origin, ...st.stops, dest], alternatives: true, avoidTolls: S.avoidTolls, avoidHighways: S.avoidHighways });
+    const points = [origin, ...st.stops, dest];
+    if (Date.now() - incDB.fetchedAt > 4 * 60e3) incDB.load().catch(() => {});
+    const routes = await routesAvoidingZbe(points, true);
     if (st.mode !== 'preview') return;
     routes.forEach((r) => { r.radarsList = radarsOnRoute(r, radarDB, S.radarTypes); });
+    annotateRoutes(routes);
     st.routes = routes; st.selRoute = 0; st.traffic = null;
     refreshRoutes();
     fitRoute(routes[0]);
@@ -511,15 +598,13 @@ function renderPreview() {
       h('span', { class: 'badges' },
         nR ? h('span', { class: 'badge red' }, `${nR} radar${nR > 1 ? 'es' : ''}`) : h('span', { class: 'badge' }, 'Sin radares'),
         r.summary.toll ? h('span', { class: 'badge gold' }, 'Peaje') : null,
+        ...routeBadges(r),
         traffic && traffic.delay > 60 ? h('span', { class: 'badge red' }, `+${fmtDur(traffic.delay)} tráfico`) : null,
       ),
       h('span', { class: 'via' }, r.via ? `por ${r.via}` : r.provider === 'osrm' ? 'Ruta (servidor de respaldo)' : ''),
     );
   });
   const toggle = (key, label) => h('button', { class: `toggle${S[key] ? ' on' : ''}`, onclick: () => { S[key] = !S[key]; saveSettings(); previewRoute(dest); } }, label);
-  const simSel = h('select', { class: 'sel', 'aria-label': 'Velocidad de simulación', onchange: (e) => { st.simSpeed = e.target.value; } },
-    ...[['auto', 'Simular: ritmo normal'], ['over', 'Simular: +20% (probar avisos)'], ['50', 'Simular: 50 km/h'], ['90', 'Simular: 90 km/h'], ['120', 'Simular: 120 km/h']]
-      .map(([v, l]) => h('option', { value: v, selected: st.simSpeed === v }, l)));
   const stopsList = st.stops.length ? h('div', { class: 'list' }, ...st.stops.map((s, i) => h('div', { class: 'item' },
     h('span', { class: 'ic', html: ICONS.pin }), h('span', { class: 'tx' }, h('div', { class: 'tt' }, `Parada ${i + 1}: ${s.name}`)),
     h('button', { class: 'btn small', onclick: () => { st.stops.splice(i, 1); previewRoute(dest); } }, 'Quitar')))) : null;
@@ -528,15 +613,52 @@ function renderPreview() {
     st.origin?.approx ? h('p', { class: 'empty', style: { padding: '0 0 8px' } }, 'Aún no hay GPS: la ruta sale desde el centro del mapa.') : null,
     h('div', { class: 'routes' }, ...cards),
     h('div', { class: 'toggles' }, toggle('avoidTolls', 'Sin peajes'), toggle('avoidHighways', 'Sin autopistas')),
+    routeNotes(st.routes[st.selRoute]),
     stopsList,
     h('div', { class: 'row', style: { marginTop: '8px' } },
-      h('button', { class: 'btn primary', onclick: () => startNav(false), html: `${ICONS.go}<span>Iniciar</span>` })),
-    h('div', { class: 'row', style: { marginTop: '8px' } },
-      simSel, h('button', { class: 'btn', onclick: () => startNav(true), html: `${ICONS.play}<span>Simular</span>` })),
+      h('button', { class: 'btn primary', onclick: () => startNav(false), html: `${ICONS.go}<span>Iniciar</span>` }),
+      h('button', { class: 'btn', onclick: () => shareTrip(), html: `${ICONS.share || ''}<span>Compartir</span>` })),
     h('div', { class: 'row', style: { marginTop: '8px' } },
       h('button', { class: 'btn', onclick: () => { st.addingStop = true; $('#q').value = ''; $('#q').focus(); showSearchHome(); }, html: `${ICONS.plus}<span>Parada</span>` }),
       h('button', { class: 'btn', onclick: cancelPreview }, 'Cancelar')),
   ), 'preview');
+}
+
+function routeBadges(r) {
+  const out = [];
+  const inc = r.incidents || [];
+  const cortes = inc.filter((x) => x.inc.type === 'corte').length;
+  const graves = inc.filter((x) => ['accidente', 'retencion'].includes(x.inc.type)).length;
+  if (cortes) out.push(h('span', { class: 'badge red' }, `${cortes} corte${cortes > 1 ? 's' : ''}`));
+  if (graves) out.push(h('span', { class: 'badge red' }, `${graves} incidencia${graves > 1 ? 's' : ''}`));
+  const obras = inc.length - cortes - graves;
+  if (obras > 0) out.push(h('span', { class: 'badge gold' }, `${obras} aviso${obras > 1 ? 's' : ''} DGT`));
+  for (const z of (r.zbe || []).slice(0, 2)) {
+    const ok = zbeDB.allowed(z.zone, S.sticker);
+    out.push(h('span', { class: `badge ${ok === false ? 'red' : 'green'}` }, `ZBE ${z.zone.name}`));
+  }
+  if (r.avoidedZbe?.length) out.push(h('span', { class: 'badge green' }, 'Rodea ZBE'));
+  return out;
+}
+
+function routeNotes(r) {
+  if (!r) return null;
+  const items = [];
+  for (const z of r.zbe || []) {
+    const ok = zbeDB.allowed(z.zone, S.sticker);
+    items.push(h('div', { class: `note ${ok === false ? 'bad' : ''}` },
+      h('img', { src: alertIconURL(ok === false ? 'zbe-no' : 'zbe'), alt: '' }),
+      h('span', null, h('b', null, `Zona de bajas emisiones: ${zoneTitle(z.zone)}`), h('small', null, `${z.startsInside ? 'Sales desde dentro' : `A ${fmtDist(z.along)}`} · ${zbeRuleText(z.zone, S.sticker, zbeDB)}${!hasSticker() ? ' · Indica la etiqueta de tu coche en Menú → Rutas' : ''}`))));
+  }
+  if (r.zbeAvoidFailed) items.push(h('div', { class: 'note bad' }, h('span', null, h('b', null, 'No se pudo calcular un rodeo de la ZBE'), h('small', null, 'Esta ruta la atraviesa.'))));
+  for (const it of (r.incidents || []).slice(0, 5)) {
+    const i = it.inc;
+    items.push(h('div', { class: `note ${['corte', 'accidente'].includes(i.type) ? 'bad' : ''}` },
+      h('img', { src: alertIconURL(INCIDENT_TYPES[i.type].icon), alt: '' }),
+      h('span', null, h('b', null, `${i.label}${i.road ? ` · ${i.road}${i.km != null ? ` km ${i.km}` : ''}` : ''}`), h('small', null, [`A ${fmtDist(it.along)}`, i.text].filter(Boolean).join(' · ')))));
+  }
+  if ((r.incidents || []).length > 5) items.push(h('div', { class: 'note' }, h('span', null, h('small', null, `Y ${r.incidents.length - 5} avisos más de la DGT en la ruta`))));
+  return items.length ? h('div', { class: 'notes' }, ...items) : null;
 }
 
 function cancelPreview() {
@@ -559,6 +681,7 @@ function startNav(simulate) {
   nav.setRoute(route);
   nav.trafficFactor = st.traffic ? st.traffic.travel / Math.max(1, st.traffic.noTraffic) : 1;
   watcher.setRoute(route);
+  trafficWatcher.setRoute(route);
   refreshRoutes();
   carRoute();
   ['#navTop', '#navBottom', '#speedo'].forEach((s) => { $(s).hidden = false; });
@@ -566,12 +689,12 @@ function startNav(simulate) {
   setFollow(true);
   const first = route.maneuvers[0];
   if (first) speak(first.pre || first.text, { priority: 'high' });
-  loadLimits(route);
+  if (st.travelMode !== 'pie') loadLimits(route);
+  document.body.classList.toggle('walking', st.travelMode === 'pie');
   requestWakeLock();
   if (simulate) {
     st.sim = new RouteSimulator(route, { speedMode: st.simSpeed, onFix: (f) => processFix(f) });
     st.sim.start();
-    toast('Simulación: el coche recorre la ruta solo.');
   } else if (st.fix) {
     processFix({ ...st.fix, t: Date.now() });
   }
@@ -579,6 +702,62 @@ function startNav(simulate) {
 
 function loadLimits(route) {
   fetchRouteLimits(route, (partial) => { route.limits = partial.slice(); }).then((l) => { if (l.length) route.limits = l; }).catch(() => {});
+}
+
+/** Zonas de bajas emisiones prohibidas para tu coche que conviene rodear (no las de origen, destino o paradas). */
+function zbeToAvoid(points) {
+  if (!S.avoidZbe || !hasSticker() || !zbeDB.zones.length) return [];
+  return zbeDB.zones.filter((z) => zbeDB.allowed(z, S.sticker) === false && !points.some((p) => zbeDB.zonesAt(p.lat, p.lon).includes(z)));
+}
+
+// El servidor de rutas solo admite zonas a evitar de hasta 10 km de perímetro en total
+const EXCLUDE_MAX = 9800;
+const ringLength = (ring) => ring.reduce((sum, p, i) => (i ? sum + dist(ring[i - 1][1], ring[i - 1][0], p[1], p[0]) : 0), 0);
+function squareAround(lat, lon, half) {
+  const dLat = half / 111320, dLon = half / (111320 * Math.cos((lat * Math.PI) / 180));
+  return [[lon - dLon, lat - dLat], [lon + dLon, lat - dLat], [lon + dLon, lat + dLat], [lon - dLon, lat + dLat], [lon - dLon, lat - dLat]];
+}
+
+/**
+ * Rutas que rodean las ZBE prohibidas para tu coche. Las zonas pequeñas se excluyen enteras;
+ * en las grandes se van cerrando, una a una, las entradas que usa la ruta (como haría un conductor).
+ */
+async function routesAvoidingZbe(points, alternatives, maxTries = 6) {
+  const opts = { points, alternatives, avoidTolls: S.avoidTolls, avoidHighways: S.avoidHighways };
+  const [w, s, e, n] = bboxOf(points.map((p) => [p.lon, p.lat]), 0.3);
+  const avoid = zbeToAvoid(points).filter((z) => !(z.bbox[0] > e || z.bbox[2] < w || z.bbox[1] > n || z.bbox[3] < s));
+  if (!avoid.length) return getRoutes(opts);
+  const polys = [];
+  let used = 0;
+  for (const z of avoid) {
+    const per = z.parts.reduce((sum, p) => sum + ringLength(p), 0);
+    if (used + per <= EXCLUDE_MAX * 0.6) { polys.push(...z.parts); used += per; }
+  }
+  let last = null;
+  for (let i = 0; i < maxTries; i++) {
+    let routes;
+    try {
+      routes = await getRoutes({ ...opts, excludePolygons: polys.length ? polys : undefined });
+    } catch (err) {
+      console.warn('Sin ruta rodeando la ZBE:', err?.message || err);
+      break;
+    }
+    last = routes;
+    const crossing = zbeDB.onRoute(routes[0]).filter((x) => avoid.includes(x.zone) && !x.startsInside);
+    if (!crossing.length) {
+      if (polys.length) routes.forEach((r) => { r.avoidedZbe = avoid.map((z) => z.name); });
+      return routes;
+    }
+    // Cerrar la entrada: un cuadrado pequeño justo dentro de la zona, sobre la calle que usa la ruta
+    const r0 = routes[0];
+    const p = pointAlong(r0.coords, r0.cum, Math.min(r0.length, crossing[0].along + 40));
+    const sq = squareAround(p.lat, p.lon, 45);
+    if (used + ringLength(sq) > EXCLUDE_MAX) break;
+    polys.push(sq); used += ringLength(sq);
+  }
+  const routes = last || await getRoutes(opts);
+  routes.forEach((r) => { r.zbeAvoidFailed = true; });
+  return routes;
 }
 
 async function reroute(fix) {
@@ -589,12 +768,14 @@ async function reroute(fix) {
   speak('Recalculando.');
   toast('Recalculando ruta…');
   try {
-    const routes = await getRoutes({ points: [{ lat: fix.lat, lon: fix.lon, heading: (fix.speed || 0) > 2 ? fix.heading : null }, ...st.stops, st.dest], alternatives: false, avoidTolls: S.avoidTolls, avoidHighways: S.avoidHighways });
+    const pts = [{ lat: fix.lat, lon: fix.lon, heading: (fix.speed || 0) > 2 ? fix.heading : null }, ...st.stops, st.dest];
+    const routes = st.travelMode === 'pie' ? await getRoutes({ points: pts, alternatives: false, costing: 'pedestrian' }) : await routesAvoidingZbe(pts, false, 3);
     if (st.mode !== 'nav') return;
     const r = routes[0];
     st.route = r; st.routes = [r];
     nav.setRoute(r, { keepProgress: true });
     watcher.setRoute(r);
+    trafficWatcher.setRoute(r);
     st.sim?.setRoute(r);
     refreshRoutes();
     carRoute();
@@ -610,18 +791,192 @@ async function reroute(fix) {
 
 function onArrive() {
   sound('arrive');
-  showMission('Destino alcanzado', st.dest?.name || '');
-  setTimeout(() => { if (st.mode === 'nav') endNav(); }, 5000);
+  const destName = st.dest?.name || '';
+  showMission('Destino alcanzado', destName);
+  setTimeout(() => {
+    if (st.mode !== 'nav') return;
+    const walking = st.travelMode === 'pie';
+    endNav();
+    if (!walking) offerParking(destName);
+  }, 5000);
+}
+
+// ======================================================================
+// Aparcamiento
+// ======================================================================
+const parking = () => store.get('parking', null);
+function parkingGeo(features) {
+  const pk = parking();
+  if (pk) features.push({ type: 'Feature', properties: { kind: 'parked', name: 'Tu coche', id: 'parked' }, geometry: { type: 'Point', coordinates: [pk.lon, pk.lat] } });
+}
+function saveParking(note = '') {
+  const pos = st.fix || nearPoint();
+  if (!pos) { toast('Aún no tengo tu posición'); return; }
+  store.set('parking', { lat: pos.lat, lon: pos.lon, t: Date.now(), note });
+  refreshFavs();
+  toast('Aparcamiento guardado');
+  reverse(pos.lat, pos.lon).then((r) => { const pk = parking(); if (pk && r?.name) { pk.address = r.name; store.set('parking', pk); } }).catch(() => {});
+}
+function offerParking(destName) {
+  openSheet(h('div', null,
+    h('h2', null, 'Has llegado'),
+    h('p', { class: 'legal' }, `${destName ? `${destName}. ` : ''}¿Guardo dónde has aparcado para volver luego al coche?`),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn primary', onclick: () => { saveParking(); closeSheet(); }, html: `${ICONS.car}<span>Guardar aparcamiento</span>` }),
+      h('button', { class: 'btn', onclick: closeSheet }, 'No'))), 'arrived');
+}
+function showParking() {
+  const pk = parking();
+  if (!pk) return;
+  const d = st.fix ? dist(st.fix.lat, st.fix.lon, pk.lat, pk.lon) : null;
+  const ago = Math.round((Date.now() - pk.t) / 60000);
+  const agoTxt = ago < 60 ? `hace ${Math.max(1, ago)} min` : ago < 1440 ? `hace ${Math.round(ago / 60)} h` : `el ${new Date(pk.t).toLocaleDateString('es-ES')}`;
+  const note = h('input', { class: 'field', type: 'text', maxlength: '80', placeholder: 'Nota: planta, plaza, calle…', value: pk.note || '' });
+  note.addEventListener('change', () => { const x = parking(); if (x) { x.note = note.value.trim(); store.set('parking', x); } });
+  st.pin = null; refreshPin();
+  map.easeTo({ center: [pk.lon, pk.lat], zoom: Math.max(map.getZoom(), 16), duration: 600 });
+  setFollow(false);
+  openSheet(h('div', null,
+    h('div', { class: 'place-head' },
+      h('img', { src: blipIconURL('parked', curSkin()), alt: '', style: { width: '40px', height: '40px' } }),
+      h('div', { class: 'tx' },
+        h('div', { class: 'place-name' }, 'Tu coche'),
+        h('div', { class: 'place-addr' }, pk.address || `${pk.lat.toFixed(5)}, ${pk.lon.toFixed(5)}`),
+        h('div', { class: 'place-meta' }, [`Aparcado ${agoTxt}`, d != null ? `a ${fmtDist(d)}` : null].filter(Boolean).join(' · '))),
+      h('button', { class: 'icon-btn', onclick: closeSheet, html: ICONS.close, 'aria-label': 'Cerrar' })),
+    note,
+    h('div', { class: 'row', style: { marginTop: '10px' } },
+      h('button', { class: 'btn primary', onclick: () => walkTo({ name: 'Tu coche', lat: pk.lat, lon: pk.lon }), html: `${ICONS.walk}<span>Ir a pie</span>` }),
+      h('button', { class: 'btn', onclick: () => { store.del('parking'); refreshFavs(); closeSheet(); toast('Aparcamiento borrado'); }, html: `${ICONS.trash}<span>Olvidar</span>` })),
+  ), 'parking');
+}
+
+/** Ruta a pie (para volver al coche). Sin radares ni límites. */
+async function walkTo(dest) {
+  if (!st.fix) { toast('Esperando GPS…'); return; }
+  closeSheet();
+  openSheet(h('div', null, h('h2', null, 'Calculando ruta a pie…'), h('div', { class: 'spinner' })), 'loading');
+  try {
+    const routes = await getRoutes({ points: [{ lat: st.fix.lat, lon: st.fix.lon }, dest], alternatives: false, costing: 'pedestrian' });
+    st.dest = dest; st.stops = []; st.routes = routes; st.selRoute = 0; st.travelMode = 'pie';
+    startNav(false);
+  } catch {
+    openSheet(h('div', null, h('h2', null, 'Sin ruta a pie'), h('p', { class: 'empty' }, 'No se pudo calcular. Revisa la conexión.')), 'error');
+  }
+}
+
+// ======================================================================
+// Compartir la llegada y buscar en la ruta
+// ======================================================================
+function shareTrip() {
+  const dest = st.dest;
+  if (!dest) return;
+  let secs, dist0;
+  if (st.mode === 'nav' && st.navState) { secs = st.navState.remainingTime; dist0 = st.navState.remaining; }
+  else { const r = st.routes[st.selRoute]; secs = r?.duration; dist0 = r?.length; }
+  const eta = secs ? fmtClock(new Date(Date.now() + secs * 1000)) : null;
+  const link = `https://www.google.com/maps/search/?api=1&query=${dest.lat.toFixed(6)},${dest.lon.toFixed(6)}`;
+  const txt = `Voy de camino a ${dest.name}${eta ? `. Llegaré sobre las ${eta} (${fmtDur(secs)}, ${fmtDist(dist0)})` : ''}.`;
+  shareText('Mi llegada', `${txt}\n${link}`).then((ok) => { if (!ok) copyText(`${txt} ${link}`); });
+}
+
+function openRouteMenu() {
+  const cats = [
+    { id: 'fuel', label: 'Gasolinera', blip: 'fuel' },
+    ...['parking', 'food', 'cafe', 'charge', 'car'].map((id) => CATEGORIES.find((c) => c.id === id)).filter(Boolean),
+  ];
+  openSheet(h('div', null,
+    h('h2', null, 'En ruta'),
+    h('div', { class: 'row', style: { gap: '6px', flexWrap: 'wrap' } },
+      ...cats.map((c) => h('button', { class: 'chip', onclick: () => searchAlongRoute(c) }, h('img', { src: blipIconURL(c.blip, curSkin()), alt: '' }), c.label))),
+    h('div', { class: 'row', style: { marginTop: '12px' } },
+      h('button', { class: 'btn', onclick: () => { closeSheet(); shareTrip(); }, html: `${ICONS.share}<span>Compartir llegada</span>` }),
+      h('button', { class: 'btn', onclick: () => showSteps(), html: `${ICONS.route}<span>Indicaciones</span>` })),
+  ), 'routemenu');
+}
+
+/** Lista de indicaciones que quedan. */
+function showSteps() {
+  const r = st.route, ns = st.navState;
+  if (!r) return;
+  const from = ns ? ns.nextIndex : 0;
+  const items = r.maneuvers.slice(from).map((m, k) => {
+    const at = r.cum[m.begin] - (ns ? ns.along : 0);
+    return h('div', { class: 'item' }, h('span', { class: 'ic', html: maneuverSVG(m.kind, m.exit) }),
+      h('span', { class: 'tx' }, h('div', { class: 'tt' }, m.text), m.sign ? h('div', { class: 'sub' }, m.sign) : null),
+      h('span', { class: 'rt' }, k === 0 && ns ? fmtDist(ns.distNext) : fmtDist(Math.max(0, at))));
+  });
+  openSheet(h('div', null, h('h2', null, 'Indicaciones'), h('div', { class: 'list steps' }, ...items)), 'steps');
+}
+
+/** Lugares a lo largo de la ruta que queda (los primeros ~40 km), ordenados por cuándo te los encuentras. */
+async function searchAlongRoute(cat) {
+  const r = st.route, ns = st.navState;
+  if (!r) return;
+  const from = ns ? ns.along : 0;
+  const to = Math.min(r.length, from + 40000);
+  openSheet(h('div', null, h('h2', null, `${cat.label} en la ruta`), h('div', { class: 'spinner' })), 'along');
+  const pts = [];
+  for (let a = from; a <= to; a += 700) { const p = pointAlong(r.coords, r.cum, a); pts.push([p.lat, p.lon]); }
+  let list = [];
+  try {
+    if (cat.id === 'fuel') {
+      const data = await loadFuel();
+      const [w, s, e, n] = bboxOf(pts.map(([la, lo]) => [lo, la]), 0.01);
+      list = nearestFuel(data, (s + n) / 2, (w + e) / 2, { fuel: S.fuelType, radius: Math.max(dist(s, w, n, e) / 2 + 1500, 3000), limit: 2000 });
+    } else {
+      list = await searchCategory(CATEGORIES.find((c) => c.id === cat.id), 0, 0, 600, pts.slice(0, 70));
+    }
+  } catch {
+    openSheet(h('div', null, h('h2', null, `${cat.label} en la ruta`), h('p', { class: 'empty' }, 'No se pudo buscar ahora mismo. Inténtalo en un momento.')), 'along');
+    return;
+  }
+  // Posición de cada sitio sobre la ruta y cuánto hay que desviarse
+  const near = [];
+  for (const p of list) {
+    let best = null;
+    for (let i = 0; i < r.coords.length - 1; i++) {
+      if (r.cum[i + 1] < from || r.cum[i] > to) continue;
+      const c0 = r.coords[i], c1 = r.coords[i + 1];
+      if (Math.abs(p.lat - c0[1]) > 0.02 || Math.abs(p.lon - c0[0]) > 0.03) continue;
+      const q = projectToSegment(p.lat, p.lon, c0[1], c0[0], c1[1], c1[0]);
+      if (!best || q.d < best.d) best = { d: q.d, along: r.cum[i] + q.t * (r.cum[i + 1] - r.cum[i]) };
+    }
+    if (best && best.d < 700 && best.along > from) near.push({ ...p, ahead: best.along - from, detour: best.d * 2.2 });
+  }
+  near.sort((a, b) => a.ahead - b.ahead);
+  const cheap = cat.id === 'fuel' ? near.filter((x) => x.price).reduce((m, x) => (m && m.price <= x.price ? m : x), null) : null;
+  openSheet(h('div', null,
+    h('h2', null, `${cat.label} en la ruta`),
+    near.length ? h('div', { class: 'list' }, ...near.slice(0, 25).map((p) => h('button', { class: 'item', onclick: () => addStopDuringNav(p) },
+      h('span', { class: 'ic' }, h('img', { src: blipIconURL(p.blip || cat.blip, curSkin()), alt: '' })),
+      h('span', { class: 'tx' }, h('div', { class: 'tt' }, p.name, p === cheap ? h('span', { class: 'badge green', style: { marginLeft: '6px' } }, 'La más barata') : null),
+        h('div', { class: 'sub' }, [`A ${fmtDist(p.ahead)}`, p.detour > 150 ? `desvío ${fmtDist(p.detour)}` : 'en la ruta', p.hours && openState(p.hours) ? openState(p.hours).text.split(' · ')[0] : null].filter(Boolean).join(' · '))),
+      p.price ? h('span', { class: 'rt price' }, fmtPrice(p.price)) : null)))
+      : h('p', { class: 'empty' }, 'No hay nada de esto cerca de la ruta en los próximos 40 km.'),
+  ), 'along');
+}
+
+async function addStopDuringNav(p) {
+  if (st.mode !== 'nav' || !st.fix) return;
+  st.stops.unshift({ name: p.name, lat: p.lat, lon: p.lon });
+  closeSheet();
+  toast(`Parada añadida: ${p.name}`);
+  speak(`Vamos primero a ${p.name}.`);
+  setData('routePts', routePtsGeo());
+  await reroute(st.fix);
 }
 
 function endNav() {
   st.sim?.stop(); st.sim = null;
-  st.mode = 'browse'; st.route = null; st.routes = []; st.stops = []; st.dest = null; st.navState = null; st.traffic = null;
+  st.mode = 'browse'; st.route = null; st.routes = []; st.stops = []; st.dest = null; st.navState = null; st.traffic = null; st.travelMode = null; st.dr = null;
   nav.route = null;
   watcher.setRoute(null);
+  trafficWatcher.setRoute(null);
   applyPoiMode();
-  document.body.classList.remove('nav', 'preview');
-  ['#navTop', '#navBottom', '#navThen', '#alertCard', '#sectionCard', '#gpsStatus'].forEach((s) => { $(s).hidden = true; });
+  document.body.classList.remove('nav', 'preview', 'walking');
+  ['#navTop', '#navBottom', '#navThen', '#alertCard', '#sectionCard', '#gpsStatus', '#laneBar'].forEach((s) => { $(s).hidden = true; });
+  document.body.classList.remove('has-lanes');
   $('#flash').classList.remove('on');
   stopSpeaking();
   refreshRoutes();
@@ -646,6 +1001,15 @@ function updateNavUI(ns) {
     if (street && text.includes(escapeHtml(street))) text = text.replace(escapeHtml(street), `<b>${escapeHtml(street)}</b>`);
     $('#manText').innerHTML = text;
     $('#manSign').textContent = m.sign || '';
+    // Carriles: cuando la maniobra está cerca (más margen en vías rápidas)
+    const lanesOn = !!(m.lanes && ns.distNext < ((st.fix?.speed || 0) > 20 ? 1800 : 700) && m.lanes.some((l) => l.a || l.v));
+    const lb = $('#laneBar');
+    if (lanesOn) {
+      const key = `${ns.nextIndex}`;
+      if (lb.dataset.k !== key) { lb.dataset.k = key; lb.innerHTML = laneSVG(m.lanes); }
+    }
+    lb.hidden = !lanesOn;
+    document.body.classList.toggle('has-lanes', lanesOn);
     const after = ns.afterNext;
     const then = $('#navThen');
     if (after && ns.distAfter < 400 && m.kind !== 'arrive') {
@@ -685,18 +1049,24 @@ function updateStreetPill() {
 }
 
 let lastAlertId = null;
-function updateAlertUI(rs) {
+function updateAlertUI(rs, ts) {
   const card = $('#alertCard');
-  const a = rs?.alert;
+  const a = mergeAlerts(rs, ts)?.alert;
   if (a) {
-    const id = (a.radar || a.report).id;
+    const id = a.id || (a.radar || a.report).id;
     if (id !== lastAlertId) {
       lastAlertId = id;
       card.querySelector('img').src = alertIconURL(a.type.icon);
       card.querySelector('.a-type').textContent = a.type.label;
+      const sub = card.querySelector('.a-sub');
+      sub.textContent = a.sub || '';
+      sub.hidden = !a.sub;
     }
     card.hidden = false;
     card.classList.toggle('report', a.kind === 'report');
+    card.classList.toggle('incident', a.kind === 'incident');
+    card.classList.toggle('zbe', a.kind === 'zbe');
+    card.classList.toggle('zbe-no', a.kind === 'zbe' && a.ok === false);
     card.classList.toggle('over', !!a.over);
     card.querySelector('.a-dist').textContent = fmtDist(a.d);
     const lim = card.querySelector('.a-lim');
@@ -823,15 +1193,33 @@ function renderPlace(p) {
   const isFav = favs().some((f) => Math.abs(f.lat - p.lat) < 1e-5 && Math.abs(f.lon - p.lon) < 1e-5);
   const d = st.fix ? dist(st.fix.lat, st.fix.lon, p.lat, p.lon) : null;
   const prices = p.prices ? h('div', { class: 'prices' }, ...FUELS.filter((f) => p.prices[f.id]).map((f) => h('div', null, f.label, h('b', null, fmtPrice(p.prices[f.id]).replace(' €', ''))))) : null;
+  const os = p.hours && !p.prices ? openState(p.hours) : null;
+  const details = [];
+  if (os) details.push(h('div', { class: `detail ${os.open ? 'open' : 'closed'}` }, h('b', null, os.text), h('small', null, hoursText(p.hours))));
+  else if (p.hours) details.push(h('div', { class: 'detail' }, h('small', null, p.prices ? `Horario: ${p.hours}` : hoursText(p.hours))));
+  const links = [];
+  if (p.phone) links.push(h('a', { class: 'btn small', href: `tel:${p.phone.split(';')[0].replace(/[^\d+]/g, '')}`, html: `${ICONS.phone}<span>Llamar</span>` }));
+  if (p.web) links.push(h('a', { class: 'btn small', href: /^https?:/.test(p.web) ? p.web : `https://${p.web}`, target: '_blank', rel: 'noopener', html: `${ICONS.web}<span>Web</span>` }));
+  // Detalles de OpenStreetMap (horario, teléfono, web) si aún no los tenemos
+  if (!p.detailsLoaded && /^(N|W|R|node|way|relation)\d+$/.test(p.id || '')) {
+    p.detailsLoaded = true;
+    placeDetails(p).then((x) => {
+      if (!x || (!x.hours && !x.phone && !x.web)) return;
+      Object.assign(p, { hours: p.hours || x.hours, phone: p.phone || x.phone, web: p.web || x.web });
+      if (st.sheetView === 'place' && st.pin && Math.abs(st.pin.lat - p.lat) < 1e-6) renderPlace(p);
+    }).catch(() => {});
+  }
   openSheet(h('div', null,
     h('div', { class: 'place-head' },
       h('div', { class: 'tx' },
         h('div', { class: 'place-name' }, p.name),
         p.address ? h('div', { class: 'place-addr' }, p.address) : null,
-        h('div', { class: 'place-meta' }, [d != null ? `A ${fmtDist(d)}` : null, p.hours || null].filter(Boolean).join(' · ')),
+        h('div', { class: 'place-meta' }, [d != null ? `A ${fmtDist(d)}` : null].filter(Boolean).join(' · ')),
       ),
       h('button', { class: 'icon-btn', onclick: () => { closeSheet(); st.pin = null; refreshPin(); }, html: ICONS.close, 'aria-label': 'Cerrar' })),
     prices,
+    ...details,
+    links.length ? h('div', { class: 'row', style: { marginTop: '8px' } }, ...links) : null,
     h('div', { class: 'row', style: { marginTop: '12px' } },
       st.addingStop
         ? h('button', { class: 'btn primary', onclick: () => addStop(p), html: `${ICONS.plus}<span>Añadir parada</span>` })
@@ -922,6 +1310,7 @@ function fitPoints(list) {
 map.on('click', 'results', (e) => { const p = st.results[e.features[0].properties.i]; if (p) selectPlace(p); });
 map.on('click', 'favs', (e) => {
   const f = e.features[0].properties;
+  if (f.kind === 'parked') { showParking(); return; }
   const [lon, lat] = e.features[0].geometry.coordinates;
   selectPlace({ name: f.name, lat, lon, blip: f.kind });
 });
@@ -944,6 +1333,47 @@ map.on('click', 'radars', (e) => {
     r.report ? h('div', { class: 'row', style: { marginTop: '12px' } }, h('button', { class: 'btn danger', onclick: () => { radarDB.removeReport(r.report.id); closeSheet(); toast('Reporte borrado'); }, html: `${ICONS.trash}<span>Borrar mi reporte</span>` })) : null,
   ), 'radar');
 });
+map.on('click', 'incidents', (e) => {
+  const i = incDB.byId(e.features[0].properties.id);
+  if (i) showIncident(i);
+});
+map.on('click', 'zbe-fill', (e) => {
+  if (map.queryRenderedFeatures(e.point, { layers: ['results', 'favs', 'radars', 'incidents', 'poi-top', 'poi-mid', 'poi-low'].filter((l) => map.getLayer(l)) }).length) return;
+  if (st.mode !== 'browse' || map.getZoom() > 15.5) return;
+  const z = zbeDB.zones.find((x) => x.id === e.features[0].properties.id);
+  if (z) showZbe(z);
+});
+
+function showIncident(i) {
+  const since = i.start ? Math.round((Date.now() - i.start) / 60000) : null;
+  const sinceTxt = since == null ? '' : since < 90 ? `Desde hace ${Math.max(1, since)} min` : since < 48 * 60 ? `Desde hace ${Math.round(since / 60)} h` : `Desde el ${new Date(i.start).toLocaleDateString('es-ES')}`;
+  openSheet(h('div', null,
+    h('div', { class: 'place-head' },
+      h('img', { src: alertIconURL(INCIDENT_TYPES[i.type].icon), alt: '', style: { width: '44px', height: '44px' } }),
+      h('div', { class: 'tx' },
+        h('div', { class: 'place-name' }, i.label),
+        h('div', { class: 'place-addr' }, [i.road && `${i.road}${i.km != null ? ` km ${i.km}` : ''}`, i.town].filter(Boolean).join(' · ')),
+        h('div', { class: 'place-meta' }, [i.text, sinceTxt, i.end ? `Hasta el ${new Date(i.end).toLocaleString('es-ES', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` : '', 'DGT'].filter(Boolean).join(' · '))),
+      h('button', { class: 'icon-btn', onclick: closeSheet, html: ICONS.close, 'aria-label': 'Cerrar' })),
+  ), 'incident');
+}
+
+function showZbe(z) {
+  const ok = zbeDB.allowed(z, S.sticker);
+  openSheet(h('div', null,
+    h('div', { class: 'place-head' },
+      h('img', { src: alertIconURL(ok === false ? 'zbe-no' : 'zbe'), alt: '', style: { width: '44px', height: '44px' } }),
+      h('div', { class: 'tx' },
+        h('div', { class: 'place-name' }, `ZBE ${zoneTitle(z)}`),
+        h('div', { class: 'place-addr' }, 'Zona de bajas emisiones'),
+        h('div', { class: 'place-meta' }, [zbeRuleText(z, S.sticker, zbeDB), z.h24 === false ? 'Con horario' : 'Todos los días', 'DGT'].join(' · '))),
+      h('button', { class: 'icon-btn', onclick: closeSheet, html: ICONS.close, 'aria-label': 'Cerrar' })),
+    z.desc ? h('p', { class: 'legal' }, z.desc) : null,
+    !hasSticker() ? h('p', { class: 'legal' }, 'Indica la etiqueta ambiental de tu coche en Menú → Rutas y te diré si puedes entrar y cómo rodearla.') : null,
+    z.url ? h('div', { class: 'row' }, h('a', { class: 'btn small', href: z.url, target: '_blank', rel: 'noopener' }, 'Normativa del ayuntamiento')) : null,
+  ), 'zbe');
+}
+
 for (const id of ['poi-top', 'poi-mid', 'poi-low']) {
   map.on('click', id, (e) => {
     const f = e.features[0];
@@ -952,7 +1382,7 @@ for (const id of ['poi-top', 'poi-mid', 'poi-low']) {
     selectPlace({ id: `poi${f.id || ''}`, name, address: f.properties.subclass ? f.properties.subclass.replace(/_/g, ' ') : '', lat, lon });
   });
 }
-for (const id of ['results', 'favs', 'radars', 'route-alt', 'poi-top', 'poi-mid', 'poi-low']) {
+for (const id of ['results', 'favs', 'radars', 'incidents', 'route-alt', 'poi-top', 'poi-mid', 'poi-low']) {
   map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer'; });
   map.on('mouseleave', id, () => { map.getCanvas().style.cursor = ''; });
 }
@@ -1029,6 +1459,15 @@ function showReportInfo(rep) {
 // ======================================================================
 // Menú de pausa (ajustes)
 // ======================================================================
+const hasSticker = () => S.sticker != null && S.sticker !== '';
+function stickerSelect(after) {
+  return h('div', { class: 'opt' },
+    h('div', { class: 'ol' }, h('div', { class: 'ot' }, 'Etiqueta ambiental de tu coche'), h('div', { class: 'od' }, 'La de la DGT (pegatina del parabrisas). Sirve para avisarte de las zonas de bajas emisiones donde no puedes entrar.')),
+    h('select', { class: 'sel', onchange: (e) => { S.sticker = e.target.value || null; saveSettings(); refreshZbe(); after?.(); } },
+      h('option', { value: '', selected: !hasSticker() }, 'No lo sé'),
+      ...STICKERS.map(([v, l]) => h('option', { value: v, selected: String(S.sticker) === v }, l))));
+}
+
 function sw(key, label, desc, after) {
   const el = h('button', { class: `switch${S[key] ? ' on' : ''}`, role: 'switch', 'aria-checked': String(!!S[key]), 'aria-label': label });
   const row = h('div', { class: 'opt', onclick: () => { S[key] = !S[key]; el.classList.toggle('on', S[key]); el.setAttribute('aria-checked', String(S[key])); saveSettings(); after?.(); } },
@@ -1256,6 +1695,8 @@ function menuTab(t, rerender) {
       h('h3', null, 'Capas'),
       sw('poi', 'Lugares en el mapa', 'Iconos de gasolineras, tiendas, restaurantes…', reloadStyle),
       sw('showRadars', 'Radares en el mapa', null, () => ['radars', 'radar-sections'].forEach((l) => map.getLayer(l) && map.setLayoutProperty(l, 'visibility', S.showRadars ? 'visible' : 'none'))),
+      sw('showIncidents', 'Incidencias de tráfico', 'Accidentes, cortes, obras y retenciones de la DGT', () => { setData('incidents', incDB.geojson(S.showIncidents)); carRadars(); }),
+      sw('showZbe', 'Zonas de bajas emisiones', 'Borde rojo si tu coche no puede entrar', refreshZbe),
       sw('buildings3d', 'Edificios en 3D', 'Más bonito, gasta algo más de batería', reloadStyle),
       sw('traffic', 'Tráfico en directo', S.tomtomKey ? 'Capa de TomTom' : 'Necesita una clave gratuita de TomTom (pestaña Navegación)', () => { if (S.traffic && !S.tomtomKey) { toast('Primero añade la clave de TomTom en Navegación'); S.traffic = false; saveSettings(); rerender(); return; } reloadStyle(); }),
       h('h3', null, 'Cámara'),
@@ -1278,6 +1719,8 @@ function menuTab(t, rerender) {
       h('h3', null, 'Rutas'),
       sw('avoidTolls', 'Evitar peajes'),
       sw('avoidHighways', 'Evitar autopistas y autovías'),
+      stickerSelect(rerender),
+      sw('avoidZbe', 'Rodear las zonas de bajas emisiones prohibidas', hasSticker() ? 'Si el destino está dentro, se entra igualmente y te aviso' : 'Primero indica la etiqueta de tu coche'),
       selectOpt('keepAwake', 'Pantalla encendida', [['siempre', 'Siempre con la app abierta'], ['navegando', 'Solo navegando'], ['nunca', 'No forzar']], requestWakeLock, 'El GPS del navegador se pausa si se apaga la pantalla'),
       sw('freeDriveLimits', 'Límite de velocidad sin ruta', 'Consulta el límite de la vía cada pocos segundos'),
       h('h3', null, 'Tráfico (opcional)'),
@@ -1302,6 +1745,8 @@ function menuTab(t, rerender) {
       h('h3', null, 'Avisar de'),
       ...typeRows,
       sw('reportAlerts', 'Mis reportes (controles, obras, accidentes…)'),
+      sw('incidentAlerts', 'Incidencias de tráfico de la DGT', 'Cortes, accidentes, retenciones, obras y obstáculos en tu camino'),
+      sw('zbeAlerts', 'Zonas de bajas emisiones', 'Al acercarte o entrar en una'),
       h('h3', null, 'Avisos'),
       selectOpt('alertDistance', 'Distancia del aviso', [['auto', 'Automática (según velocidad)'], ['300', '300 m'], ['500', '500 m'], ['800', '800 m'], ['1000', '1 km']]),
       sw('overspeedAlerts', 'Alerta si vas por encima del límite', 'Pitido y aviso de voz cerca del radar y en tramos'),
@@ -1327,7 +1772,13 @@ function menuTab(t, rerender) {
   if (t === 'lugares') {
     const home = store.get('home'), work = store.get('work');
     const fl = favs();
+    const pk = parking();
     return [
+      h('h3', null, 'Aparcamiento'),
+      h('div', { class: 'list' },
+        h('div', { class: 'item' }, h('span', { class: 'ic', html: ICONS.car }), h('span', { class: 'tx' }, h('div', { class: 'tt' }, pk ? 'Tu coche' : 'Sin guardar'), h('div', { class: 'sub' }, pk ? (pk.note || pk.address || 'Toca «Ver» para ir') : 'Guarda dónde aparcas para volver luego a pie')),
+          pk ? h('button', { class: 'btn small', onclick: () => { $('#menu')?.remove(); showParking(); } }, 'Ver') : null,
+          h('button', { class: 'btn small', onclick: () => { saveParking(); rerender(); } }, pk ? 'Aquí' : 'Guardar aquí'))),
       h('h3', null, 'Casa y trabajo'),
       h('div', { class: 'list' },
         h('div', { class: 'item' }, h('span', { class: 'ic', html: ICONS.home }), h('span', { class: 'tx' }, h('div', { class: 'tt' }, 'Casa'), h('div', { class: 'sub' }, home?.address || 'Sin configurar: búscala y pulsa «Casa»')), home ? h('button', { class: 'btn small', onclick: () => { store.del('home'); refreshFavs(); rerender(); } }, 'Borrar') : null),
@@ -1358,13 +1809,13 @@ function menuTab(t, rerender) {
     NATIVE ? h('h3', null, 'Android Auto') : null,
     NATIVE ? h('p', { class: 'legal' }, 'Abre Minimapa en el móvil antes de conectar el coche (puede quedarse en segundo plano). En Android Auto: Ajustes → toca 10 veces «Versión» → ⋮ → Ajustes de desarrollador → marca «Fuentes desconocidas». En el coche verás el mapa con tu skin, las maniobras, los radares y el botón Destinos.') : null,
     h('h3', null, 'Cómo se usa'),
-    h('p', { class: 'legal' }, 'Busca un sitio o mantén pulsado el mapa, pulsa «Ir» y luego «Iniciar». «Simular» recorre la ruta sin moverte (ideal para probar los avisos). El botón del triángulo guarda reportes en tu posición. Sin ruta, la app sigue avisando de radares y mostrando el límite de la vía.'),
+    h('p', { class: 'legal' }, 'Busca un sitio o mantén pulsado el mapa, pulsa «Ir» y luego «Iniciar». Navegando, el botón ⋯ busca gasolineras y otros sitios en tu camino, muestra las indicaciones y comparte tu hora de llegada. El botón del triángulo guarda reportes en tu posición. Sin ruta, la app sigue avisando de radares, incidencias de la DGT y zonas de bajas emisiones, y muestra el límite de la vía.'),
     h('h3', null, 'Datos y créditos'),
     h('p', { class: 'legal', html: [
       'Mapa: <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a>, <a href="https://openmaptiles.org" target="_blank" rel="noopener">OpenMapTiles</a> y <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© colaboradores de OpenStreetMap</a>.',
       'Rutas: <a href="https://valhalla1.openstreetmap.de" target="_blank" rel="noopener">Valhalla (FOSSGIS)</a> y <a href="https://project-osrm.org" target="_blank" rel="noopener">OSRM</a>. Búsqueda: <a href="https://photon.komoot.io" target="_blank" rel="noopener">Photon</a> y Nominatim. Lugares: Overpass API.',
       'Radares: DGT (Punto de Acceso Nacional), Ayuntamiento de Madrid (CC BY 4.0), Servei Català de Trànsit, listado DGT georreferenciado por Tachwire (ODbL) y OpenStreetMap (ODbL).',
-      'Carburantes: Ministerio para la Transición Ecológica. Tráfico opcional: TomTom.',
+      'Carburantes: Ministerio para la Transición Ecológica. Incidencias de tráfico y zonas de bajas emisiones: DGT (Punto de Acceso Nacional, CC BY). Tráfico opcional: TomTom.',
       'Motor de mapa: MapLibre GL JS (BSD-3). Tipografías: Oswald y Bebas Neue (OFL).',
     ].join('<br><br>') }),
     h('h3', null, 'Aviso'),
@@ -1466,6 +1917,7 @@ function carNavInfo(ns, alert) {
   if (info.active && ns?.next) {
     const m = ns.next, a = ns.afterNext;
     info.cur = { kind: m.kind, exit: m.exit || 0, text: m.text || '', street: (m.street || '').split(' / ')[0] };
+    if (m.lanes && ns.distNext < 2000 && m.lanes.some((l) => l.a || l.v)) info.cur.lanes = m.lanes;
     if (a && ns.distAfter < 500 && m.kind !== 'arrive') info.next = { kind: a.kind, exit: a.exit || 0, text: a.text || '', street: (a.street || '').split(' / ')[0] };
     info.distNext = ns.distNext;
     info.remaining = ns.remaining;
@@ -1485,7 +1937,7 @@ function carLive(fix, ns, rs, pos, rot) {
   const limit = ns?.limit ?? st.limitFree ?? null;
   const kmh = (fix.speed || 0) * 3.6;
   const a = rs?.alert;
-  const alert = a ? { id: (a.radar || a.report).id, icon: a.type.icon, label: a.type.label, d: Math.round(a.d), alertDist: a.alertDist, limit: a.kind === 'radar' ? a.limit : null, over: !!a.over, kind: a.kind } : null;
+  const alert = a ? { id: a.id || (a.radar || a.report).id, icon: a.type.icon, label: a.sub && a.kind !== 'radar' ? `${a.type.label} · ${a.sub}` : a.type.label, d: Math.round(a.d), alertDist: a.alertDist, limit: a.kind === 'radar' ? a.limit : null, over: !!a.over, kind: a.kind } : null;
   const sec = rs?.section;
   const live = {
     lat: pos.lat, lon: pos.lon, rot, speed: fix.speed || 0, limit, over: !!(limit && kmh > limit * tol + 2),
@@ -1502,7 +1954,7 @@ function carLiveNow() {
   carLastSent = 0;
   const ns = st.mode === 'nav' ? st.navState : null;
   const pos = ns && !ns.offRoute && ns.offset < 40 ? ns.snapped : { lat: st.fix.lat, lon: st.fix.lon };
-  carLive(st.fix, ns, watcher.lastState, pos, currentRotation());
+  carLive(st.fix, ns, mergeAlerts(watcher.lastState, st.trafficState), pos, currentRotation());
 }
 
 async function svgToPng(svg, size = 96) {
@@ -1516,15 +1968,27 @@ async function svgToPng(svg, size = 96) {
   return c.toDataURL('image/png');
 }
 
+async function svgStringToPng(svgStr) {
+  const img = new Image();
+  img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgStr)}`;
+  await img.decode();
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth || 200; c.height = img.naturalHeight || 64;
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return c.toDataURL('image/png');
+}
+
 async function carIcons(ns) {
   const m = ns.next, a = ns.afterNext && ns.distAfter < 500 ? ns.afterNext : null;
-  const key = `${ns.nextIndex}:${m.kind}:${m.exit}|${a ? `${a.kind}:${a.exit}` : ''}`;
+  const lanes = m.lanes && m.lanes.some((l) => l.a || l.v) ? m.lanes : null;
+  const key = `${ns.nextIndex}:${m.kind}:${m.exit}|${a ? `${a.kind}:${a.exit}` : ''}|${lanes ? 'L' : ''}`;
   if (key === carIconKey) return;
   carIconKey = key;
   try {
     const current = await svgToPng(maneuverSVG(m.kind, m.exit));
     const next = a ? await svgToPng(maneuverSVG(a.kind, a.exit)) : '';
-    carCall('setIcons', { current, next });
+    const lanesImg = lanes ? await svgStringToPng(laneSVG(lanes, { size: 64 })) : '';
+    carCall('setIcons', { current, next, lanes: lanesImg });
   } catch { /* sin icono: Android Auto usa el suyo */ }
 }
 
@@ -1535,7 +1999,12 @@ function carRoute() {
   carCall('setRoute', { json });
 }
 
-function carRadars(g) { carCall('setRadars', { json: JSON.stringify(g || radarDB.geojson()) }); }
+function carRadars(g) {
+  if (!CAR) return;
+  const base = g || radarDB.geojson();
+  const inc = S.showIncidents ? incDB.geojson(true).features.map((f) => ({ ...f, properties: { ...f.properties, lim: '', tipo: 'incidencia' } })) : [];
+  carCall('setRadars', { json: JSON.stringify({ type: 'FeatureCollection', features: [...base.features, ...inc] }) });
+}
 
 function carSettings() {
   const def = SKINS[S.skin]?.custom ? skinDefOf(S.skin) : null;
@@ -1693,15 +2162,17 @@ async function openSetup(first) {
       { n: 2, title: 'Notificación', ok: !!stat.notifications, desc: 'La notificación «Minimapa activo» es la que mantiene el GPS, la voz y los avisos con la pantalla apagada o en Android Auto.', btn: ['Permitir', async () => { await sys?.requestNotifications(); setTimeout(refresh, 1500); }] },
       { n: 3, title: 'Batería sin restricciones', ok: !!stat.battery, desc: `Evita que ${brand} cierre Minimapa en segundo plano a mitad de ruta. Muy importante en Xiaomi, Samsung, Huawei y Oppo.`, btn: ['Quitar restricción', async () => { await sys?.requestBattery(); }] },
       { n: 4, title: 'Android Auto', ok: !!store.get('autoSetupDone'), desc: stat.androidAuto === false ? 'No tienes la app Android Auto instalada. Si tu coche la usa, instálala primero.' : 'Abre Android Auto → Ajustes → toca 10 veces «Versión» → menú ⋮ → «Ajustes de desarrollador» → marca «Fuentes desconocidas». Después Minimapa sale en el coche.', btn: [stat.androidAuto === false ? 'Instalar Android Auto' : 'Abrir Android Auto', async () => { store.set('autoSetupDone', true); await sys?.openAndroidAuto(); }] },
+      { n: 5, title: 'Etiqueta ambiental', ok: hasSticker(), desc: 'Elige la pegatina de la DGT de tu coche para saber en qué zonas de bajas emisiones puedes entrar y rodear las demás.', extra: true },
     ];
     body.replaceChildren(
-      h('p', { class: 'legal' }, first ? 'Cuatro pasos y listo. Puedes volver aquí cuando quieras desde Menú → Info.' : 'Comprueba que todo está bien para usar Minimapa con la pantalla apagada y en el coche.'),
+      h('p', { class: 'legal' }, first ? 'Cinco pasos y listo. Puedes volver aquí cuando quieras desde Menú → Info.' : 'Comprueba que todo está bien para usar Minimapa con la pantalla apagada y en el coche.'),
       ...steps.map((x) => h('div', { class: `setup-step${x.ok ? ' ok' : ''}` },
         h('div', { class: 'n' }, x.ok ? '✓' : String(x.n)),
         h('div', { class: 'tx' },
           h('div', { class: 'tt' }, x.title),
           h('div', { class: 'dd' }, x.desc),
-          x.ok ? h('div', { class: 'st' }, 'Listo') : null,
+          x.ok ? h('div', { class: 'st' }, x.n === 5 ? stickerName(S.sticker) : 'Listo') : null,
+          x.extra ? stickerSelect(refresh) : null,
           !x.ok && x.btn ? h('button', { class: 'btn small primary', onclick: x.btn[1] }, x.btn[0]) : (x.n === 4 && x.btn ? h('button', { class: 'btn small', onclick: x.btn[1] }, x.btn[0]) : null)))),
       h('div', { class: 'row', style: { marginTop: '16px' } }, h('button', { class: 'btn primary', onclick: () => close() }, 'Listo, a conducir')),
     );
@@ -1796,6 +2267,8 @@ function buildUI() {
   $('#btnLocate').innerHTML = ICONS.locate;
   $('#btnMute').innerHTML = S.voice ? ICONS.volume : ICONS.mute;
   $('#btnOverview').innerHTML = ICONS.overview;
+  $('#btnRouteMenu').innerHTML = ICONS.more;
+  $('#btnRouteMenu').addEventListener('click', openRouteMenu);
   $('#btnEnd').innerHTML = ICONS.close;
 
   $('#chips').replaceChildren(...CATEGORIES.slice(0, 9).map((c) => h('button', { class: 'chip', dataset: { id: c.id }, onclick: () => runCategory(c) }, h('img', { src: blipIconURL(c.blip, curSkin()), alt: '' }), c.label)));
@@ -1846,7 +2319,7 @@ function buildUI() {
   });
   map.on('click', (e) => {
     if (skinPop) { closeSkinPop(); return; }
-    const hits = map.queryRenderedFeatures(e.point, { layers: ['results', 'favs', 'radars', 'route-alt', 'poi-top', 'poi-mid', 'poi-low'].filter((l) => map.getLayer(l)) });
+    const hits = map.queryRenderedFeatures(e.point, { layers: ['results', 'favs', 'radars', 'incidents', 'zbe-fill', 'route-alt', 'poi-top', 'poi-mid', 'poi-low'].filter((l) => map.getLayer(l)) });
     if (!hits.length && st.mode === 'browse' && st.sheetView && st.sheetView !== 'loading') { closeSheet(); st.pin = null; refreshPin(); }
   });
 }
@@ -1875,6 +2348,14 @@ function start() {
 buildUI();
 initNative();
 radarDB.init().catch((e) => console.warn('Radares:', e));
+zbeDB.load().catch(() => {});
+incDB.load().catch(() => {});
+// Incidencias: cada 5 minutos navegando y cada 15 sin ruta (solo con la app a la vista o navegando)
+setInterval(() => {
+  const age = Date.now() - incDB.fetchedAt;
+  const every = st.mode === 'nav' ? 5 * 60e3 : 15 * 60e3;
+  if (age > every && (st.mode === 'nav' || document.visibilityState === 'visible')) incDB.load(true).catch(() => {});
+}, 60e3);
 $('#splash').addEventListener('click', start);
 enableSheetDrag();
 if (NATIVE) setTimeout(start, 900); // en la app no hace falta pulsar: arranca sola tras el logo
@@ -1885,4 +2366,4 @@ if (!NATIVE && 'serviceWorker' in navigator && (location.protocol === 'https:' |
 }
 
 // Ganchos para pruebas y depuración desde la consola
-window.__mm = { onCarAction, carLive, navigateNow, map, st, S, radarDB, nav, watcher, processFix, previewRoute, startNav, endNav, selectPlace, toast, runCategory, openMenu, setSkin, pointAlong, angDiff, openSkinEditor, openSkinImport, SKINS, curSkinId };
+window.__mm = { onCarAction, carLive, navigateNow, map, st, S, radarDB, nav, watcher, processFix, previewRoute, startNav, endNav, selectPlace, toast, runCategory, openMenu, setSkin, pointAlong, angDiff, openSkinEditor, openSkinImport, SKINS, curSkinId, incDB, zbeDB, trafficWatcher, showIncident, showZbe, showParking, saveParking, openRouteMenu, searchAlongRoute, showSteps, walkTo, renderPreview };

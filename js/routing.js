@@ -131,6 +131,7 @@ function fromValhallaTrip(trip, opts) {
         time: m.time || 0,
         length: (m.length || 0) * 1000,
         toll: !!m.toll,
+        lanes: Array.isArray(m.lanes) && m.lanes.length > 1 ? m.lanes.map((l) => ({ d: l.directions | 0, v: l.valid | 0, a: l.active | 0 })) : null,
       });
     }
   });
@@ -149,13 +150,16 @@ async function valhallaRoutes(opts) {
     if (i === 0 && p.heading != null) { loc.heading = Math.round(p.heading); loc.heading_tolerance = 60; }
     return loc;
   });
+  const walk = opts.costing === 'pedestrian';
   const body = {
     locations,
-    costing: 'auto',
-    costing_options: { auto: { use_tolls: opts.avoidTolls ? 0 : 0.5, use_highways: opts.avoidHighways ? 0 : 1, use_ferry: 0.3 } },
+    costing: walk ? 'pedestrian' : 'auto',
+    costing_options: walk ? { pedestrian: {} } : { auto: { use_tolls: opts.avoidTolls ? 0 : 0.5, use_highways: opts.avoidHighways ? 0 : 1, use_ferry: 0.3 } },
     directions_options: { units: 'kilometers', language: 'es-ES' },
     alternates: opts.alternatives && opts.points.length === 2 ? 2 : 0,
+    turn_lanes: !walk,
   };
+  if (opts.excludePolygons?.length) body.exclude_polygons = opts.excludePolygons;
   const data = await valhallaCall('route', body);
   const trips = [data.trip, ...(data.alternates || []).map((a) => a.trip)].filter(Boolean);
   return trips.map((t) => fromValhallaTrip(t, opts));
@@ -215,10 +219,23 @@ function fromOsrmRoute(r, opts) {
         kind, text, pre: `${text}.`, alert: `${text}.`, post: '',
         street: st.name || st.ref || '', sign: st.exits ? `Salida ${st.exits}` : '',
         exit: st.maneuver?.exit || 0, begin: base, time: st.duration || 0, length: st.distance || 0, toll: false,
+        lanes: osrmLanes(st.intersections?.[0]?.lanes),
       });
     });
   });
   return finalize({ provider: 'osrm', coords, maneuvers, duration: r.duration, summary: { toll: false, highway: false, ferry: false }, points: opts.points });
+}
+
+// Indicaciones de carril de OSRM → máscara de bits (mismos valores que Valhalla)
+const LANE_BITS = { none: 1, straight: 2, 'sharp left': 4, left: 8, 'slight left': 16, 'slight right': 32, right: 64, 'sharp right': 128, uturn: 256 };
+function osrmLanes(lanes) {
+  if (!Array.isArray(lanes) || lanes.length < 2) return null;
+  const out = lanes.map((l) => {
+    const d = (l.indications || []).reduce((m, i) => m | (LANE_BITS[i] || 0), 0) || 1;
+    const vi = l.valid_indication ? LANE_BITS[l.valid_indication] || d : d;
+    return { d, v: l.valid ? vi : 0, a: l.valid ? vi : 0 };
+  });
+  return out.some((l) => l.a) && out.some((l) => !l.a) ? out : null;
 }
 
 async function osrmRoutes(opts) {
@@ -248,6 +265,8 @@ export async function getRoutes(opts) {
     if (routes.length) return routes;
     throw new Error('Sin rutas');
   } catch (e) {
+    // Con zonas a evitar o a pie no hay respaldo posible (OSRM no sabe hacerlo)
+    if (opts.excludePolygons?.length || opts.costing === 'pedestrian') throw e;
     if (e.code === 442 || e.code === 171) {
       const err = new Error('No hay ruta en coche hasta ese punto'); err.final = true; throw err;
     }

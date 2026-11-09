@@ -75,7 +75,7 @@ public class CarBridgePlugin extends Plugin {
     /** Iconos de maniobra en PNG (base64) dibujados por la app con el mismo diseño. */
     @PluginMethod
     public void setIcons(PluginCall call) {
-        CarState.get().setIcons(decode(call.getString("current")), decode(call.getString("next")));
+        CarState.get().setIcons(decode(call.getString("current")), decode(call.getString("next")), decode(call.getString("lanes")));
         call.resolve();
     }
 

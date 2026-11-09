@@ -42,6 +42,7 @@ public final class CarState {
     private volatile JSONArray places = new JSONArray();
     private volatile Bitmap currentIcon;
     private volatile Bitmap nextIcon;
+    private volatile Bitmap lanesIcon;
     private volatile boolean brainAlive;
     private volatile long lastLiveAt;
     private volatile int carSessions;
@@ -101,9 +102,10 @@ public final class CarState {
         emit("places");
     }
 
-    public void setIcons(Bitmap current, Bitmap next) {
+    public void setIcons(Bitmap current, Bitmap next, Bitmap lanes) {
         currentIcon = current;
         nextIcon = next;
+        lanesIcon = lanes;
         emit("icons");
     }
 
@@ -122,6 +124,7 @@ public final class CarState {
     public JSONArray places() { return places; }
     public Bitmap currentIcon() { return currentIcon; }
     public Bitmap nextIcon() { return nextIcon; }
+    public Bitmap lanesIcon() { return lanesIcon; }
 
     /** La app del móvil está abierta y ha mandado datos hace poco. */
     public boolean brainAlive() {

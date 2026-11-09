@@ -8,13 +8,18 @@ Navegador GPS personal que funciona en el navegador del móvil y se instala como
 - **Editor de skins**: Menú → Mapa → *Crear skin*. Eliges de qué skin partir, cambias 10 colores (fondo, agua, parques, edificios, autopistas, carreteras, calles, rótulos, ruta y detalles) y el estilo (brillo de neón, calles sin borde, rótulos en cursiva, línea central, grosor de calles, forma de los iconos, edificios y efecto de pantalla). El mapa cambia mientras editas. Con *Pasar* se la mandas a tu amigo por WhatsApp o lo que quieras, y él la añade con *Importar skin* pegando el mensaje. Las skins propias también se ven en Android Auto.
 - **Todos los sitios en el mapa**: gasolineras, parkings, restaurantes, farmacias, hospitales, cajeros, talleres, hoteles, puntos de carga… con iconos tipo "blip".
 - **Búsqueda** de direcciones y lugares, pin con pulsación larga, favoritos, Casa y Trabajo, y recientes.
-- **Rutas** con alternativas, paradas intermedias, opciones para evitar peajes o autopistas, número de radares en cada ruta y hora de llegada.
-- **Navegación giro a giro** con voz, flechas de maniobra, siguiente maniobra, recálculo automático si te sales de la ruta, límite de velocidad de la vía y velocímetro que se pone en rojo si te pasas.
+- **Rutas** con alternativas, paradas intermedias, opciones para evitar peajes o autopistas, número de radares, incidencias y zonas de bajas emisiones de cada ruta, y hora de llegada.
+- **Navegación giro a giro** con voz, flechas de maniobra, siguiente maniobra, **carriles** que debes coger (también en Android Auto), recálculo automático si te sales de la ruta, límite de velocidad de la vía y velocímetro que se pone en rojo si te pasas.
+- **Incidencias de tráfico de la DGT** en directo: cortes, accidentes, retenciones, obras, obstáculos, vehículos detenidos y tiempo adverso. Salen en el mapa, en la vista de la ruta y con aviso por voz al acercarte, solo las de tu sentido de la marcha. El APK las descarga de la DGT cada 5 minutos navegando (unos 200 KB).
+- **Zonas de bajas emisiones (ZBE)** de toda España con las reglas oficiales de la DGT. Indica la etiqueta de tu coche (Menú → Navegación) y la app te avisa al acercarte a una zona donde no puedes entrar, la marca en rojo en el mapa y busca un rodeo cuando el destino está fuera.
+- **Túneles**: si se pierde el GPS navegando, la posición sigue avanzando por la ruta a tu última velocidad, así los avisos de radar y los giros siguen llegando a tiempo.
+- **En ruta** (botón ⋯ al navegar): gasolineras con precio, parkings, comida, café, puntos de carga y talleres que quedan en tu camino, con el desvío que supone; al elegir uno se añade como parada. También la lista de indicaciones y **compartir la hora de llegada**.
+- **Aparcamiento**: al llegar te ofrece guardar dónde has dejado el coche (con una nota, por ejemplo la planta y la plaza) y luego te lleva **a pie** hasta él.
+- **Ficha de cada sitio** con horario (abierto o cerrado ahora), teléfono y web cuando OpenStreetMap los tiene.
 - **Avisos de radares**: fijos, de tramo (con tu velocidad media en directo), semáforos con cámara, cámaras de cinturón y móvil, y zonas de radar móvil conocidas. Hay aviso por voz, sirena corta y un parpadeo rojo y azul en los bordes de la pantalla. También avisa sin ruta: basta con conducir con la app abierta.
 - **Actualización periódica**: GitHub Actions descarga cada día las fuentes oficiales y OpenStreetMap, las fusiona sin duplicados y publica la base. La app la comprueba cada 6 horas y además completa en directo con los radares de OSM de la zona por la que vas.
 - **Reportes propios** (radar fijo, radar móvil, control, accidente, obras, peligro, atasco). Se guardan solo en tu móvil, caducan solos y te avisan como un radar más.
 - **Gasolineras con precio** oficial del Ministerio, ordenadas por cercanía o por precio.
-- **Simulador**: recorre la ruta sin moverte, para probar los avisos desde el sofá.
 - Funciona sin conexión la app y el mapa que ya hayas visto, y mantiene la pantalla encendida.
 - **Tráfico en directo (opcional)** con una clave gratuita de TomTom.
 - **Skin automática de día y de noche** según la salida y la puesta de sol, flechas de sentido sobre la ruta, recentrado automático y vibración en los avisos.
@@ -53,7 +58,8 @@ La misma app funciona en el navegador en **https://miguelav33.github.io/minimapa
 ## Uso rápido
 
 - **Ir a un sitio**: búscalo o mantén pulsado el mapa → *Ir* → elige ruta → *Iniciar*.
-- **Probar sin moverte**: en la ruta, elige *Simular: +20 %* y pulsa *Simular* para oír los avisos de exceso de velocidad.
+- **Durante la ruta**: botón ⋯ para buscar en el camino, ver las indicaciones o compartir tu llegada.
+- **Volver al coche**: Menú → Lugares → Aparcamiento → *Ver* → *Ir a pie*.
 - **Reportar**: botón del triángulo.
 - **Menú** (≡): skins y capas, voz y sonidos, tipos de radar y distancia de aviso, tus lugares, copia de seguridad y créditos.
 - **Brújula**: alterna entre "mapa según la marcha" y "norte arriba".
@@ -112,7 +118,8 @@ python scripts/actualizar_datos.py        # actualizar los datos a mano
 - En la **versión web**, si apagas la pantalla el navegador pausa el GPS; la **app Android** sigue funcionando en segundo plano gracias a su notificación.
 - Android Auto funciona como app instalada fuera de Play Store (con "Fuentes desconocidas" activado). Google podría cambiar ese requisito en el futuro.
 - Rutas, búsqueda y mapa usan servidores públicos y gratuitos de la comunidad OpenStreetMap (FOSSGIS Valhalla, Photon, OpenFreeMap, Overpass). Para uso personal van sobrados; si alguno cae, la app usa el de respaldo (OSRM, Nominatim).
-- Sin clave de TomTom no hay tráfico en directo: la hora de llegada se calcula sin atascos.
+- Sin clave de TomTom no hay tráfico en directo: la hora de llegada se calcula sin atascos. Las incidencias de la DGT sí funcionan sin clave, pero no cubren el País Vasco ni Cataluña, que publican las suyas aparte.
+- El servidor de rutas solo deja excluir zonas de hasta 10 km de perímetro: las ZBE grandes (como la de Madrid) se rodean cerrando una a una las entradas que usaría la ruta. Si no hay forma, la vista de la ruta lo dice. Los horarios de cada ZBE no se tienen en cuenta: si tiene horario, la app avisa siempre.
 - Las voces dependen del móvil. En Android viene la de Google en español; en iPhone, Mónica o Jorge.
 
 ## Aviso legal
@@ -121,4 +128,4 @@ En España es legal usar avisadores que informan de la ubicación pública de ra
 
 ## Créditos
 
-Mapa © colaboradores de OpenStreetMap, OpenMapTiles y OpenFreeMap · Rutas: Valhalla (FOSSGIS) y OSRM · Búsqueda: Photon (Komoot) y Nominatim · Radares: DGT, Ayuntamiento de Madrid, Servei Català de Trànsit, Tachwire (ODbL) y OSM (ODbL) · Carburantes: Ministerio para la Transición Ecológica · Motor de mapa: MapLibre GL JS (BSD-3) · Tipografías: Oswald y Bebas Neue (SIL OFL).
+Mapa © colaboradores de OpenStreetMap, OpenMapTiles y OpenFreeMap · Rutas: Valhalla (FOSSGIS) y OSRM · Búsqueda: Photon (Komoot) y Nominatim · Radares: DGT, Ayuntamiento de Madrid, Servei Català de Trànsit, Tachwire (ODbL) y OSM (ODbL) · Carburantes: Ministerio para la Transición Ecológica · Incidencias y zonas de bajas emisiones: DGT (Punto de Acceso Nacional, CC BY) · Motor de mapa: MapLibre GL JS (BSD-3) · Tipografías: Oswald y Bebas Neue (SIL OFL).

@@ -747,17 +747,192 @@ def actualizar_carburantes() -> bool:
     return True
 
 
+# ----------------------------------------------------------------------
+# Zonas de bajas emisiones (DGT, DATEX II ControlledZoneTablePublication)
+# ----------------------------------------------------------------------
+ZBE_BASE = "https://nap.dgt.es/datex2/v3/dgt/zbe/ControledZonePublication/"
+ZBE_RESPALDO = ["Madrid", "Barcelona", "RondasDeBarcelona", "Bilbao", "Granada", "Valladolid", "Palma", "Alicante", "Malaga",
+                "Oviedo", "ACoruña", "PamplonaEnsanche", "SevillaCartuja", "Donostia-SanSebastian", "VitoriaGasteiz", "LasRozas",
+                "AlcalaDeHenares", "Fuenlabrada", "Castellon", "Cartagena", "Benidorm", "Pontevedra", "Lleida", "Girona", "Salamanca",
+                "Avila", "Torremolinos", "DosHermanas", "Motril", "Reus", "Rubi", "Sabadell", "Tarragona", "Terrasa", "Mataro", "Manlleu",
+                "Granollers", "MolinaDeSegura", "Viladecans", "SantJoanDespi", "Gava", "CerdanyolaDelValles", "SantBoiDeLlobregat",
+                "SantCugatDelValles", "ElPratDeLlobregat", "Valencia"]
+# De la etiqueta más limpia a la más contaminante
+ETIQUETAS = {"0": 0, "CERO": 0, "ECO": 1, "C": 2, "B": 3, "SIN DISTINTIVO": 4, "A": 4}
+XSI_TYPE = "{http://www.w3.org/2001/XMLSchema-instance}type"
+
+
+def _simplificar(puntos, tol_m=12.0):
+    """Douglas-Peucker en metros (aprox. plana local). Los anillos cerrados se parten por el punto más lejano."""
+    if len(puntos) < 4:
+        return puntos
+    if puntos[0] == puntos[-1]:
+        lejos = max(range(len(puntos)), key=lambda i: distancia_m(puntos[0][1], puntos[0][0], puntos[i][1], puntos[i][0]))
+        if 0 < lejos < len(puntos) - 1:
+            return _simplificar(puntos[:lejos + 1], tol_m)[:-1] + _simplificar(puntos[lejos:], tol_m)
+    lat0 = sum(p[1] for p in puntos) / len(puntos)
+    kx, ky = 111320 * math.cos(math.radians(lat0)), 110540
+    xy = [(p[0] * kx, p[1] * ky) for p in puntos]
+    keep = [False] * len(puntos)
+    keep[0] = keep[-1] = True
+    pila = [(0, len(puntos) - 1)]
+    while pila:
+        a, b = pila.pop()
+        ax, ay = xy[a]
+        bx, by = xy[b]
+        dx, dy = bx - ax, by - ay
+        L = math.hypot(dx, dy) or 1e-9
+        mejor, im = -1.0, -1
+        for i in range(a + 1, b):
+            px, py = xy[i]
+            d = abs(dy * px - dx * py + bx * ay - by * ax) / L
+            if d > mejor:
+                mejor, im = d, i
+        if mejor > tol_m and im > 0:
+            keep[im] = True
+            pila += [(a, im), (im, b)]
+    return [p for p, k in zip(puntos, keep) if k]
+
+
+def _etiquetas_prohibidas(zona) -> int | None:
+    """Rango de etiqueta a partir del cual se prohíbe entrar (4 = solo sin etiqueta).
+
+    La DGT lista unas veces las etiquetas permitidas y otras las prohibidas (el campo «negate» no es fiable),
+    pero las reglas siempre van en orden: si una etiqueta puede entrar, también las más limpias.
+    Si la lista incluye 0 o ECO es la de permitidas; si no, la de prohibidas.
+    """
+    vistas = []
+    for e in zona.iter():
+        if "NonCodableCondition" not in e.get(XSI_TYPE, ""):
+            continue
+        tipo = _desc(e, "type")
+        if tipo is not None and (tipo.text or "").strip() != "stickerCondition":
+            continue
+        for v in e.iter():
+            if _local(v.tag) == "value" and v.text and v.text.strip().upper() in ETIQUETAS:
+                vistas.append(ETIQUETAS[v.text.strip().upper()])
+    if not vistas:
+        return None
+    if min(vistas) <= 1:
+        return max(vistas) + 1 if max(vistas) < 4 else None
+    return min(vistas)
+
+
+def _todo_el_dia(zona) -> bool:
+    inicios = [(_local(e.tag), (e.text or "").strip()) for e in zona.iter() if _local(e.tag) in ("startTimeOfPeriod", "endTimeOfPeriod")]
+    if not inicios:
+        return True
+    return all((v.startswith("00:00") if t == "startTimeOfPeriod" else v.startswith("23:5")) for t, v in inicios)
+
+
+def _ciudad_de_fichero(slug: str) -> str:
+    """«ElPratDeLlobregat» → «El Prat de Llobregat»; «ACoruña» → «A Coruña»."""
+    t = re.sub(r"(?<=[a-zñáéíóú])(?=[A-ZÁÉÍÓÚÑ])|(?<=[A-Z])(?=[A-Z][a-zñ])", " ", slug).replace("-", " - ")
+    return re.sub(r"(?<= )(De|Del|La|Las|Los|El)\b(?!$)", lambda m: m.group(1).lower(), t).replace(" - ", "-")
+
+
+def _limpiar_nombre(n: str) -> str:
+    n = re.sub(r"\s+", " ", n or "").strip()
+    n = re.sub(r"^Ayuntamiento de\s+", "", n, flags=re.I)
+    n = re.sub(r"^ZBE\s+|\s+ZBE$", "", n, flags=re.I).strip()
+    return n.title() if n.isupper() else n
+
+
+def convertir_zbe(contenido: bytes, ciudad: str) -> list[dict]:
+    raiz = ET.fromstring(contenido)
+    salida = []
+    for zona in raiz.iter():
+        if _local(zona.tag) != "controlledZone":
+            continue
+        estado = _desc(zona, "status")
+        if estado is not None and (estado.text or "").strip().lower() in ("inactive", "suspended"):
+            continue
+        nombre_el = next((_desc(n, "value") for n in _hijos(zona, "name")), None)
+        nombre = (nombre_el.text or "").strip() if nombre_el is not None else ciudad
+        # «Madrid (ZBEDPE  Distrito Centro)» → «Distrito Centro»; «Madrid (Madrid ZBE)» → «Madrid»
+        m = re.match(r"^(.*?)\s*\((.*)\)\s*$", nombre)
+        ciudad_legible = m.group(1).strip() if m else _ciudad_de_fichero(ciudad)
+        if m:
+            interior = re.sub(r"^(ZBEDEP|ZBEDPE|ZBE)\s+", "", re.sub(r"\s+", " ", m.group(2))).strip()
+            nombre = m.group(1) if interior.lower() in (m.group(1).lower(), f"{m.group(1).lower()} zbe") else interior.replace(" ZBE", "")
+        nombre = _limpiar_nombre(nombre)
+        desc_el = next((_desc(n, "value") for n in _hijos(zona, "controlledZoneDescription")), None)
+        url_el = _desc(zona, "urlForFurtherInformation")
+        partes = []
+        for esquinas in zona.iter():
+            if _local(esquinas.tag) != "openlrPolygonCorners":
+                continue
+            pts = []
+            for c in _hijos(esquinas, "openlrCoordinates"):
+                la, lo = num(getattr(_desc(c, "latitude"), "text", None)), num(getattr(_desc(c, "longitude"), "text", None))
+                if la is not None and lo is not None and en_espana(la, lo):
+                    pts.append((round(lo, 5), round(la, 5)))
+            if len(pts) < 3:
+                continue
+            if pts[0] != pts[-1]:
+                pts.append(pts[0])
+            pts = _simplificar(pts)
+            if len(pts) >= 4:
+                partes.append([list(p) for p in pts])
+        if not partes:
+            continue
+        # Las partes diminutas (unas pocas esquinas, menos de ~50 m) son ruido del dibujo
+        partes = [p for p in partes if max(distancia_m(p[0][1], p[0][0], q[1], q[0]) for q in p) > 50] or partes
+        todos = [q for p in partes for q in p]
+        salida.append({
+            "id": f"zbe-{sin_acentos(ciudad).lower()}-{len(salida)}",
+            "name": nombre,
+            "city": ciudad_legible,
+            "deny": _etiquetas_prohibidas(zona),
+            "h24": _todo_el_dia(zona),
+            "url": (url_el.text or "").strip() if url_el is not None and url_el.text else None,
+            "desc": (desc_el.text or "").strip()[:200] if desc_el is not None and desc_el.text else None,
+            "bbox": [min(q[0] for q in todos), min(q[1] for q in todos), max(q[0] for q in todos), max(q[1] for q in todos)],
+            "parts": partes,
+        })
+    return salida
+
+
+def actualizar_zbe() -> bool:
+    log("→ zonas de bajas emisiones: descargando…")
+    try:
+        indice = descargar(ZBE_BASE, timeout=60).decode("utf-8", "replace")
+        ciudades = [urllib.parse.unquote(m) for m in re.findall(r'href="(?:[^"]*/)?([^/"]+)\.xml"', indice)]
+    except Exception as e:  # noqa: BLE001
+        log(f"  ⚠ zbe: sin índice ({e}), uso la lista conocida")
+        ciudades = []
+    ciudades = sorted(set(ciudades or ZBE_RESPALDO))
+    zonas = []
+    for ciudad in ciudades:
+        try:
+            contenido = descargar(ZBE_BASE + urllib.parse.quote(ciudad) + ".xml", timeout=120, intentos=2)
+            nuevas = convertir_zbe(contenido, ciudad)
+            zonas += nuevas
+            log(f"  · {ciudad}: {len(nuevas)} zona(s)")
+        except Exception as e:  # noqa: BLE001
+            log(f"  ⚠ {ciudad}: {e}")
+    if len(zonas) < 5:
+        log(f"  ✗ zbe: solo {len(zonas)} zonas, no se sobrescribe")
+        return False
+    datos = {"generado": ahora_iso(), "fuente": "DGT (nap.dgt.es)", "zones": zonas}
+    (DATOS / "zbe.json").write_text(json.dumps(datos, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    log(f"  ✓ zbe: {len(zonas)} zonas en {len(ciudades)} ciudades ({sum(len(p) for z in zonas for p in z['parts'])} puntos)")
+    return True
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--solo", choices=[*FUENTES, "carburantes"], help="actualizar solo esta fuente")
+    ap.add_argument("--solo", choices=[*FUENTES, "carburantes", "zbe"], help="actualizar solo esta fuente")
     ap.add_argument("--sin-red", action="store_true", help="no descargar: solo volver a fusionar las copias locales")
     args = ap.parse_args()
     estado = {}
     if not args.sin_red:
-        objetivo = [args.solo] if args.solo else [*FUENTES, "carburantes"]
+        objetivo = [args.solo] if args.solo else [*FUENTES, "carburantes", "zbe"]
         for fid in objetivo:
             if fid == "carburantes":
                 actualizar_carburantes()
+            elif fid == "zbe":
+                actualizar_zbe()
             else:
                 estado[fid] = actualizar_fuente(fid)
     base = escribir_base(estado)

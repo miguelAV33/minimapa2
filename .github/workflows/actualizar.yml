@@ -4,6 +4,7 @@ on:
   schedule:
     - cron: '23 3 * * *'   # cada día de madrugada (hora de Madrid ≈ 04:23 / 05:23)
     - cron: '41 13 * * *'  # segunda pasada a mediodía para los precios de carburantes
+    - cron: '*/20 * * * *' # incidencias de la DGT para la versión web (el APK las pide directamente)
   workflow_dispatch:       # botón "Run workflow" para lanzarlo a mano
   push:
     branches: [main]
@@ -27,19 +28,24 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
+        if: github.event.schedule != '*/20 * * * *'
         with:
           python-version: '3.12'
 
       - name: Instalar pyproj (coordenadas de Cataluña)
+        if: github.event.schedule != '*/20 * * * *'
         run: pip install pyproj || true
 
       - name: Probar los conversores
+        if: github.event.schedule != '*/20 * * * *'
         run: python scripts/test_actualizar_datos.py
 
-      - name: Descargar, convertir y fusionar radares y carburantes
+      - name: Descargar, convertir y fusionar radares, carburantes y zonas de bajas emisiones
+        if: github.event.schedule != '*/20 * * * *'
         run: python scripts/actualizar_datos.py
 
       - name: Guardar los datos nuevos en el repositorio
+        if: github.event.schedule != '*/20 * * * *'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -52,6 +58,12 @@ jobs:
             git pull --rebase -X theirs origin main || { git rebase --abort; echo "Conflicto al integrar datos"; }
             git push || echo "No se pudo subir el commit (se publicará igualmente)"
           fi
+
+      - name: Incidencias de tráfico de la DGT (copia para la versión web)
+        run: |
+          curl -sS -L --compressed --max-time 90 -A "Minimapa/1.4 (+https://github.com/${{ github.repository }})" \
+            -o data/incidencias.xml https://nap.dgt.es/datex2/v3/dgt/SituationPublication/datex2_v37.xml \
+            && ls -la data/incidencias.xml || echo "::warning::No se pudieron descargar las incidencias de la DGT"
 
       # Publicación web: requiere Settings → Pages → Source: GitHub Actions
       - uses: actions/configure-pages@v5

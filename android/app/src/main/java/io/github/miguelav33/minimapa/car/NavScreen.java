@@ -14,6 +14,8 @@ import androidx.car.app.model.DateTimeWithZone;
 import androidx.car.app.model.Distance;
 import androidx.car.app.model.Template;
 import androidx.car.app.navigation.NavigationManager;
+import androidx.car.app.navigation.model.Lane;
+import androidx.car.app.navigation.model.LaneDirection;
 import androidx.car.app.navigation.model.Maneuver;
 import androidx.car.app.navigation.model.MessageInfo;
 import androidx.car.app.navigation.model.NavigationTemplate;
@@ -24,6 +26,7 @@ import androidx.core.graphics.drawable.IconCompat;
 import androidx.lifecycle.DefaultLifecycleObserver;
 import androidx.lifecycle.LifecycleOwner;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.TimeZone;
@@ -110,9 +113,9 @@ public class NavScreen extends Screen implements CarState.Listener, DefaultLifec
                 JSONObject cur = nav.optJSONObject("cur");
                 if (cur != null) {
                     RoutingInfo.Builder rb = new RoutingInfo.Builder()
-                            .setCurrentStep(step(cur, state.currentIcon()), distance(nav.optDouble("distNext", 0)));
+                            .setCurrentStep(step(cur, state.currentIcon(), state.lanesIcon()), distance(nav.optDouble("distNext", 0)));
                     JSONObject next = nav.optJSONObject("next");
-                    if (next != null) rb.setNextStep(step(next, state.nextIcon()));
+                    if (next != null) rb.setNextStep(step(next, state.nextIcon(), null));
                     b.setNavigationInfo(rb.build());
                 }
             }
@@ -185,7 +188,19 @@ public class NavScreen extends Screen implements CarState.Listener, DefaultLifec
         return Distance.create(Math.max(0, m), Distance.UNIT_METERS);
     }
 
-    private static Step step(JSONObject s, Bitmap iconBitmap) {
+    private static Step step(JSONObject s, Bitmap iconBitmap, Bitmap lanesBitmap) {
+        JSONArray lanes = s.optJSONArray("lanes");
+        if (lanes != null && lanesBitmap != null) {
+            try {
+                return buildStep(s, iconBitmap, lanes, lanesBitmap);
+            } catch (RuntimeException e) {
+                // Si el coche no acepta los carriles, se muestra la maniobra sin ellos
+            }
+        }
+        return buildStep(s, iconBitmap, null, null);
+    }
+
+    private static Step buildStep(JSONObject s, Bitmap iconBitmap, JSONArray lanes, Bitmap lanesBitmap) {
         String text = s.optString("text", "Continúa");
         Step.Builder sb = new Step.Builder(text.isEmpty() ? "Continúa" : text);
         int type = maneuverType(s.optString("kind"), s.optInt("exit", 0));
@@ -195,8 +210,31 @@ public class NavScreen extends Screen implements CarState.Listener, DefaultLifec
         sb.setManeuver(mb.build());
         String road = s.optString("street");
         if (!road.isEmpty()) sb.setRoad(road);
+        if (lanes != null && lanesBitmap != null) {
+            for (int i = 0; i < lanes.length(); i++) {
+                JSONObject l = lanes.optJSONObject(i);
+                if (l == null) continue;
+                int d = l.optInt("d", 1), good = l.optInt("a", 0) != 0 ? l.optInt("a", 0) : l.optInt("v", 0);
+                Lane.Builder lb = new Lane.Builder();
+                boolean any = false;
+                for (int[] bit : LANE_SHAPES) {
+                    if ((d & bit[0]) != 0) { lb.addDirection(LaneDirection.create(bit[1], (good & bit[0]) != 0)); any = true; }
+                }
+                if (!any) lb.addDirection(LaneDirection.create(LaneDirection.SHAPE_STRAIGHT, good != 0));
+                sb.addLane(lb.build());
+            }
+            sb.setLanesImage(new CarIcon.Builder(IconCompat.createWithBitmap(lanesBitmap)).build());
+        }
         return sb.build();
     }
+
+    /** Bit de dirección de carril (Valhalla) → forma de Android Auto. */
+    private static final int[][] LANE_SHAPES = {
+            {1, LaneDirection.SHAPE_STRAIGHT}, {2, LaneDirection.SHAPE_STRAIGHT},
+            {4, LaneDirection.SHAPE_SHARP_LEFT}, {8, LaneDirection.SHAPE_NORMAL_LEFT}, {16, LaneDirection.SHAPE_SLIGHT_LEFT},
+            {32, LaneDirection.SHAPE_SLIGHT_RIGHT}, {64, LaneDirection.SHAPE_NORMAL_RIGHT}, {128, LaneDirection.SHAPE_SHARP_RIGHT},
+            {256, LaneDirection.SHAPE_U_TURN_LEFT}, {512, LaneDirection.SHAPE_SLIGHT_LEFT}, {1024, LaneDirection.SHAPE_SLIGHT_RIGHT},
+    };
 
     /** Traduce el tipo de maniobra de la app al de Android Auto (en España las rotondas giran a la izquierda). */
     static int maneuverType(String kind, int exit) {

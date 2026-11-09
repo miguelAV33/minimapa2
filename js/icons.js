@@ -30,6 +30,11 @@ export const ICONS = {
   copy: svg(`<rect ${S} x="8" y="8" width="12" height="12" rx="1.5"/><path ${S} d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8"/>`),
   route: svg(`<circle ${S} cx="6" cy="18" r="2.5"/><circle ${S} cx="18" cy="6" r="2.5"/><path ${S} d="M8.5 18H16a3 3 0 0 0 0-6H8a3 3 0 0 1 0-6h7.5"/>`),
   share: svg(`<circle ${S} cx="18" cy="5.5" r="2.5"/><circle ${S} cx="6" cy="12" r="2.5"/><circle ${S} cx="18" cy="18.5" r="2.5"/><path ${S} d="m8.3 10.8 7.4-4M8.3 13.2l7.4 4"/>`),
+  phone: svg(`<path ${S} d="M6.5 3.5h3l1.5 4-2 1.5a11 11 0 0 0 6 6l1.5-2 4 1.5v3a2 2 0 0 1-2 2A16.5 16.5 0 0 1 4.5 5.5a2 2 0 0 1 2-2Z"/>`),
+  web: svg(`<circle ${S} cx="12" cy="12" r="8.5"/><path ${S} d="M3.5 12h17M12 3.5c2.5 2.6 3.6 5.5 3.6 8.5s-1.1 5.9-3.6 8.5c-2.5-2.6-3.6-5.5-3.6-8.5S9.5 6.1 12 3.5Z"/>`),
+  car: svg(`<path ${S} d="M5 16.5V12l2-5h10l2 5v4.5"/><path ${S} d="M3.5 12h17v4.5h-17Z"/><circle cx="7.5" cy="18" r="1.6" fill="currentColor"/><circle cx="16.5" cy="18" r="1.6" fill="currentColor"/>`),
+  walk: svg(`<circle cx="13" cy="4.5" r="2" fill="currentColor"/><path ${S} d="m9 21 2.5-6 2.5 2.5V21M8 12l2-4.5 3.5.5 2 3.5 2.5 1M11.5 8 10 14"/>`),
+  more: svg(`<circle cx="5" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="currentColor"/><circle cx="19" cy="12" r="2" fill="currentColor"/>`),
   fullscreen: svg(`<path ${S} d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>`),
 };
 
@@ -76,4 +81,39 @@ export function maneuverSVG(kind, exit = 0) {
   }
   if (kind === 'left') body = mirror(BASE.right);
   return svg(body, 48);
+}
+
+// ---------- Carriles ----------
+// Bits de dirección (los mismos que usa Valhalla): 1 ninguna, 2 recto, 4 izquierda cerrada, 8 izquierda, 16 izquierda suave,
+// 32 derecha suave, 64 derecha, 128 derecha cerrada, 256 cambio de sentido, 512 incorporación a la izquierda, 1024 a la derecha
+const LANE_DIRS = [[2, 0], [32, 45], [64, 90], [128, 135], [16, -45], [8, -90], [4, -135], [256, 180], [512, -25], [1024, 25]];
+function laneArrow(ang, cls) {
+  if (ang === 180) {
+    return `<path class="${cls}" d="M15 30V14a5 5 0 0 0-10 0v6"/><path class="${cls}" d="M1.5 16.5 5 21l3.5-4.5"/>`;
+  }
+  const r = (ang * Math.PI) / 180;
+  const bx = 12, by = ang === 0 ? 30 : 17;
+  const L = ang === 0 ? 25 : 11;
+  const ex = bx + Math.sin(r) * L, ey = by - Math.cos(r) * L;
+  const h1 = r + Math.PI * 0.8, h2 = r - Math.PI * 0.8;
+  const stem = ang === 0 ? '' : `M12 30V17`;
+  return `<path class="${cls}" d="${stem}M${bx} ${by}L${ex.toFixed(1)} ${ey.toFixed(1)}"/>` +
+    `<path class="${cls}" d="M${(ex + Math.sin(h1) * 5.5).toFixed(1)} ${(ey - Math.cos(h1) * 5.5).toFixed(1)}L${ex.toFixed(1)} ${ey.toFixed(1)}L${(ex + Math.sin(h2) * 5.5).toFixed(1)} ${(ey - Math.cos(h2) * 5.5).toFixed(1)}"/>`;
+}
+/** Dibujo de los carriles: [{d: direcciones, v: válidas, a: recomendadas}] */
+export function laneSVG(lanes, { color = '#ffffff', size = 34 } = {}) {
+  const w = 24, gap = 6;
+  const W = lanes.length * w + (lanes.length - 1) * gap;
+  const body = lanes.map((l, i) => {
+    const good = l.a || l.v;
+    let dirs = LANE_DIRS.filter(([b]) => l.d & b);
+    if (!dirs.length) dirs = [[1, 0]];
+    // primero las direcciones apagadas, encima las que hay que seguir
+    const parts = dirs.map(([b, ang]) => ({ ang, on: (good & b) || (b === 1 && good) })).sort((x, y) => Number(x.on) - Number(y.on));
+    const cls = (on) => (on ? (l.a ? 'on' : 'ok') : 'off');
+    const sep = i < lanes.length - 1 ? `<path class="sep" d="M${w + gap / 2} 2v30" />` : '';
+    return `<g transform="translate(${i * (w + gap)} 0)">${parts.map((p) => laneArrow(p.ang, cls(p.on))).join('')}${sep}</g>`;
+  }).join('');
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-2 0 ${W + 4} 34" width="${Math.round(((W + 4) / 34) * size)}" height="${size}">` +
+    `<style>path{fill:none;stroke-width:3.2;stroke-linecap:round;stroke-linejoin:round}.on{stroke:${color}}.ok{stroke:${color};opacity:.75}.off{stroke:${color};opacity:.28}.sep{stroke:${color};opacity:.25;stroke-width:1.2;stroke-dasharray:3 3}</style>${body}</svg>`;
 }

@@ -181,5 +181,48 @@ class Conversores(unittest.TestCase):
         self.assertEqual(nuevo[0]["rumbo"], 120)
 
 
+    def _zbe_xml(self, etiquetas, nombre="Ciudad (ZBEDPE  Distrito Centro)", horas=("00:00:00Z", "23:59:59Z")):
+        coords = "".join(f"<loc:openlrCoordinates><loc:latitude>{la}</loc:latitude><loc:longitude>{lo}</loc:longitude></loc:openlrCoordinates>"
+                         for la, lo in [(40.0, -3.0), (40.0, -2.99), (40.01, -2.99), (40.01, -3.0)])
+        conds = "".join(f'<tra:conditions xsi:type="conz:NonCodableCondition"><tra:active>true</tra:active><tra:condition><com:values>'
+                        f'<com:value>{e}</com:value></com:values></tra:condition><tra:type>stickerCondition</tra:type></tra:conditions>' for e in etiquetas)
+        return f"""<?xml version="1.0" encoding="UTF-8"?>
+<payload xmlns:com="c" xmlns:loc="l" xmlns:tra="t" xmlns:conz="z" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<conz:controlledZoneTable><conz:controlledZone id="1"><conz:name><com:values><com:value lang="ES">{nombre}</com:value></com:values></conz:name>
+<conz:status>active</conz:status><conz:trafficRegulationOrder><tra:trafficRegulation><tra:condition xsi:type="tra:ConditionSet">
+<tra:conditions xsi:type="tra:LocationCondition"><tra:implementedLocation><loc:locationContainedInGroup><loc:openlrAreaLocationReference>
+<loc:openlrPolygonCorners>{coords}</loc:openlrPolygonCorners></loc:openlrAreaLocationReference></loc:locationContainedInGroup></tra:implementedLocation></tra:conditions>
+<tra:conditions xsi:type="tra:ConditionSet"><tra:negate>true</tra:negate>{conds}</tra:conditions>
+<tra:conditions xsi:type="tra:ValidityCondition"><tra:validPeriod><tra:recurringTimePeriodOfDay><tra:startTimeOfPeriod>{horas[0]}</tra:startTimeOfPeriod>
+<tra:endTimeOfPeriod>{horas[1]}</tra:endTimeOfPeriod></tra:recurringTimePeriodOfDay></tra:validPeriod></tra:conditions>
+</tra:condition></tra:trafficRegulation></conz:trafficRegulationOrder></conz:controlledZone></conz:controlledZoneTable></payload>""".encode()
+
+    def test_zbe_lista_de_prohibidas(self):
+        z = A.convertir_zbe(self._zbe_xml(["C", "B", "Sin distintivo"]), "Ciudad")
+        self.assertEqual(len(z), 1)
+        self.assertEqual(z[0]["name"], "Distrito Centro")
+        self.assertEqual(z[0]["city"], "Ciudad")
+        self.assertEqual(z[0]["deny"], 2)  # C, B y sin etiqueta no entran
+        self.assertTrue(z[0]["h24"])
+        self.assertEqual(z[0]["parts"][0][0], z[0]["parts"][0][-1])  # anillo cerrado
+
+    def test_zbe_lista_de_permitidas(self):
+        z = A.convertir_zbe(self._zbe_xml(["0", "ECO", "B"], nombre="Barcelona", horas=("07:00:00Z", "20:00:00Z")), "Barcelona")
+        self.assertEqual(z[0]["deny"], 4)  # solo los coches sin etiqueta
+        self.assertEqual(z[0]["name"], "Barcelona")
+        self.assertFalse(z[0]["h24"])
+
+    def test_zbe_solo_sin_etiqueta(self):
+        z = A.convertir_zbe(self._zbe_xml(["Sin distintivo"], nombre="Madrid (Madrid ZBE)"), "Madrid")
+        self.assertEqual(z[0]["deny"], 4)
+        self.assertEqual(z[0]["name"], "Madrid")
+
+    def test_simplificar_anillo(self):
+        anillo = [(-3.0, 40.0), (-2.995, 40.00001), (-2.99, 40.0), (-2.99, 40.01), (-3.0, 40.01), (-3.0, 40.0)]
+        s = A._simplificar(anillo)
+        self.assertEqual(s[0], s[-1])
+        self.assertEqual(len(s), 5)  # el punto casi alineado desaparece
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -8,7 +8,7 @@ export const BLIP_COLORS = {
   pharmacy: '#3fd16b', hospital: '#ff4d4d', bank: '#2ecc71', car: '#a7b4c2', hotel: '#9b8cff', police: '#4f8dff',
   fire: '#ff5a36', school: '#f2c94c', star: '#ffd23f', cinema: '#c084fc', park: '#5dd36b', transit: '#38bdf8',
   sport: '#22c55e', landmark: '#d6dde6', charge: '#7dd3fc', dot: '#9aa8b8',
-  fav: '#ffd23f', home: '#5dd36b', work: '#38bdf8', res: '#ffffff',
+  fav: '#ffd23f', home: '#5dd36b', work: '#38bdf8', res: '#ffffff', parked: '#3d8bff',
 };
 
 function canvas(w, h) {
@@ -185,13 +185,24 @@ const GLYPHS = {
     ctx.fillRect(-0.55, -0.8, 0.14, 1.6);
     ctx.beginPath(); ctx.moveTo(-0.41, -0.8); ctx.lineTo(0.7, -0.5); ctx.lineTo(-0.41, -0.15); ctx.closePath(); ctx.fill();
   },
+  cloud: (ctx) => {
+    ctx.beginPath();
+    ctx.arc(-0.35, 0.05, 0.38, 0, Math.PI * 2); ctx.arc(0.15, -0.2, 0.48, 0, Math.PI * 2); ctx.arc(0.5, 0.12, 0.32, 0, Math.PI * 2);
+    ctx.fill(); ctx.fillRect(-0.35, 0.05, 0.85, 0.38);
+    ctx.lineWidth = 0.14; ctx.lineCap = 'round';
+    for (const x of [-0.35, 0.05, 0.45]) { ctx.beginPath(); ctx.moveTo(x, 0.62); ctx.lineTo(x - 0.12, 0.88); ctx.stroke(); }
+  },
+  bar: (ctx) => { roundRect(ctx, -0.75, -0.2, 1.5, 0.4, 0.08); ctx.fill(); },
+  leaf: (ctx) => {
+    ctx.beginPath(); ctx.moveTo(-0.7, 0.7); ctx.bezierCurveTo(-0.8, -0.4, 0.1, -0.8, 0.75, -0.75); ctx.bezierCurveTo(0.75, 0.1, 0.2, 0.75, -0.7, 0.7); ctx.fill();
+  },
 };
 
 const POI_GLYPH = {
   fuel: 'fuel', parking: ['letter', 'P'], food: 'food', cafe: 'cafe', bar: 'bar', shop: 'shop', pharmacy: 'pharmacy',
   hospital: ['letter', 'H'], bank: ['letter', '€'], car: 'car', hotel: 'hotel', police: 'police', fire: 'fire',
   school: 'school', star: 'star', cinema: 'cinema', park: 'park', transit: 'transit', sport: 'sport',
-  landmark: 'landmark', charge: 'charge', dot: 'dot', fav: 'star', home: 'home', work: 'work', res: 'dot',
+  landmark: 'landmark', charge: 'charge', dot: 'dot', fav: 'star', home: 'home', work: 'work', res: 'dot', parked: 'car',
 };
 
 function drawGlyph(ctx, spec, cx, cy, scale, bg) {
@@ -237,6 +248,44 @@ const ALERT_STYLE = {
   'rep-peligro': ['#f9a825', 'exclaim'],
   'rep-atasco': ['#c62828', 'jam'],
 };
+// Incidencias oficiales de la DGT: señal triangular de peligro (o la de dirección prohibida para los cortes)
+const INCIDENT_STYLE = {
+  'inc-accidente': ['#d32f2f', 'exclaim'],
+  'inc-retencion': ['#d32f2f', 'jam'],
+  'inc-obstaculo': ['#e65100', 'exclaim'],
+  'inc-vehiculo': ['#e65100', 'car'],
+  'inc-clima': ['#1565c0', 'cloud'],
+  'inc-obras': ['#ef6c00', 'cone'],
+};
+function makeIncidentIcon(id, size = 28) {
+  const { c, ctx } = canvas(size, size);
+  const m = size / 2;
+  if (id === 'inc-corte' || id === 'zbe-no') {
+    ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.arc(m, m + 1, m - 1.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#d32f2f'; ctx.beginPath(); ctx.arc(m, m, m - 1.5, 0, Math.PI * 2); ctx.fill();
+    ctx.lineWidth = 1.6; ctx.strokeStyle = '#fff'; ctx.stroke();
+    ctx.fillStyle = '#fff'; drawGlyph(ctx, 'bar', m, m, size * 0.36, '#d32f2f');
+    if (id === 'zbe-no') { ctx.fillStyle = '#d32f2f'; ctx.font = `800 ${size * 0.22}px system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('ZBE', m, m + 0.5); }
+    return toImage(c, ctx);
+  }
+  if (id === 'zbe') {
+    ctx.fillStyle = 'rgba(0,0,0,.35)'; roundRect(ctx, 1.5, 2.5, size - 3, size - 3, 5); ctx.fill();
+    ctx.fillStyle = '#2e7d32'; roundRect(ctx, 1, 1, size - 3, size - 3, 5); ctx.fill();
+    ctx.lineWidth = 1.6; ctx.strokeStyle = '#fff'; ctx.stroke();
+    ctx.fillStyle = '#fff'; drawGlyph(ctx, 'leaf', (size - 1) / 2, (size - 1) / 2, size * 0.3, '#2e7d32');
+    return toImage(c, ctx);
+  }
+  const [col, glyph] = INCIDENT_STYLE[id];
+  const tri = (inset) => { ctx.beginPath(); ctx.moveTo(m, 1.5 + inset); ctx.lineTo(size - 1.5 - inset * 1.15, size - 3 - inset * 0.6); ctx.lineTo(1.5 + inset * 1.15, size - 3 - inset * 0.6); ctx.closePath(); };
+  ctx.save(); ctx.translate(0, 1); ctx.fillStyle = 'rgba(0,0,0,.35)'; tri(0); ctx.fill(); ctx.restore();
+  ctx.lineJoin = 'round';
+  ctx.fillStyle = '#ffffff'; tri(0); ctx.fill();
+  ctx.lineWidth = 3.2; ctx.strokeStyle = col; tri(1.8); ctx.stroke();
+  ctx.fillStyle = '#1a1a1a'; ctx.strokeStyle = '#1a1a1a';
+  drawGlyph(ctx, glyph, m, size * 0.62, size * 0.2, '#ffffff');
+  return toImage(c, ctx);
+}
+
 function makeAlertIcon(id, size = 26) {
   const [bg, glyph] = ALERT_STYLE[id];
   const { c, ctx } = canvas(size, size);
@@ -314,6 +363,7 @@ function makePin(skin) {
 export function makeImage(id, skin) {
   if (id.startsWith('blip-')) return makeBlip(id.slice(5), skin);
   if (ALERT_STYLE[id]) return makeAlertIcon(id);
+  if (INCIDENT_STYLE[id] || id === 'inc-corte' || id === 'zbe' || id === 'zbe-no') return makeIncidentIcon(id);
   if (id === 'shield-blue') return makeShield('#1f5fbf');
   if (id === 'shield-red') return makeShield('#c62828');
   if (id === 'shield-orange') return makeShield('#d9822b');

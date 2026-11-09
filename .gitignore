@@ -3,3 +3,4 @@ www/
 __pycache__/
 *.log
 .DS_Store
+data/incidencias.xml

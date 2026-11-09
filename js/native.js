@@ -17,6 +17,8 @@ export const Native = {
   get app() { return plugin('App'); },
   get car() { return plugin('CarBridge'); },
   get sistema() { return plugin('Sistema'); },
+  // Conexión nativa de Capacitor: permite leer datos de webs sin CORS (DGT)
+  get http() { return plugin('CapacitorHttp'); },
 };
 
 /** GPS nativo que sigue funcionando con la pantalla apagada (servicio en primer plano con notificación). */

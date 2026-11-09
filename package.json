@@ -1,6 +1,6 @@
 {
   "name": "minimapa",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "description": "Navegador GPS personal con mapas de estilo videojuego, rutas con voz, avisos de radares y Android Auto.",
   "type": "module",

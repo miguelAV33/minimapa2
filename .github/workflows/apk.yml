@@ -42,7 +42,7 @@ jobs:
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           {
             echo "VERSION_CODE=${{ github.run_number }}"
-            echo "VERSION_NAME=1.3.${{ github.run_number }}"
+            echo "VERSION_NAME=1.4.${{ github.run_number }}"
             echo "REMOTE_BASE=https://${OWNER}.github.io/${{ github.event.repository.name }}/"
             echo "REPO=${{ github.repository }}"
           } >> "$GITHUB_ENV"

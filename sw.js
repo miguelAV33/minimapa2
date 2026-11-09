@@ -1,5 +1,5 @@
 // Service worker: la app funciona sin conexión y guarda en caché el mapa que ya has visto.
-const VERSION = 'minimapa-1.3.0';
+const VERSION = 'minimapa-1.4.0';
 const SHELL_CACHE = `${VERSION}-app`;
 const TILE_CACHE = 'minimapa-tiles';
 const MAX_TILES = 6000;
@@ -7,7 +7,7 @@ const MAX_TILES = 6000;
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/app.js', 'js/config.js', 'js/util.js', 'js/skins.js', 'js/blips.js', 'js/icons.js', 'js/voice.js',
-  'js/routing.js', 'js/nav.js', 'js/radars.js', 'js/search.js', 'js/fuel.js', 'js/native.js', 'js/build-info.js', 'js/sun.js',
+  'js/routing.js', 'js/nav.js', 'js/radars.js', 'js/search.js', 'js/fuel.js', 'js/native.js', 'js/build-info.js', 'js/sun.js', 'js/traffic.js',
   'vendor/maplibre-gl.mjs', 'vendor/maplibre-gl-worker.mjs', 'vendor/maplibre-gl.css',
   'fonts/oswald-latin-400-normal.woff2', 'fonts/oswald-latin-500-normal.woff2', 'fonts/oswald-latin-600-normal.woff2',
   'fonts/oswald-latin-700-normal.woff2', 'fonts/bebas-neue-latin-400-normal.woff2',

@@ -31,6 +31,10 @@ export const CONFIG = Object.assign({
   // Datos generados cada día por GitHub Actions (mismo sitio, sin CORS)
   radarData: remote('data/radares.json'),
   fuelData: remote('data/gasolineras.json'),
+  zbeData: remote('data/zbe.json'),
+  // Incidencias de tráfico de la DGT. El APK las pide directamente; la web usa la copia que deja GitHub Actions
+  dgtIncidents: 'https://nap.dgt.es/datex2/v3/dgt/SituationPublication/datex2_v37.xml',
+  incidentData: BUILD.remoteBase ? [BUILD.remoteBase + 'data/incidencias.xml'] : ['data/incidencias.xml'],
   radarRefreshHours: 6,
   // Vista inicial si aún no hay GPS (Madrid)
   startCenter: [-3.7038, 40.4168],
